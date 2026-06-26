@@ -98,6 +98,17 @@ function createSession({ name, cwd, agent, role }) {
   return meta;
 }
 
+// register the controller session (meta only; pty starts when first opened)
+function ensureControllerSession() {
+  if ([...sessions.values()].some((s) => s.meta.role === "controller")) return;
+  const c = cfg.controller;
+  if (!c || !cfg.agents[c.agent]) return;
+  const id = String(nextId++);
+  const meta = { id, name: "controller", cwd: path.resolve(c.cwd || cfg.workspacesRoot), agent: c.agent, role: "controller" };
+  sessions.set(id, { meta, pty: null, buf: "", subs: new Set(), busy: false, idleTimer: null });
+  persist();
+}
+
 function deleteSession(id) {
   const s = sessions.get(id);
   if (!s) return false;
@@ -241,6 +252,7 @@ function attach(ws, s) {
 // ---- boot -----------------------------------------------------------------
 if (require.main === module) {
   loadPersisted();
+  ensureControllerSession();
   server.listen(cfg.port, "0.0.0.0", () => {
     const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i.family === "IPv4" && !i.internal).map((i) => i.address);
     console.log(`PC AI Remote Controller on :${cfg.port}`);

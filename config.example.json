@@ -7,7 +7,7 @@
   "idleSeconds": 20,
   "ntfyTopic": "",
   "rustdeskId": "",
-  "controller": { "agent": "opencode", "cwd": "C:/Users/tmcgu/Desktop/ai projects" },
+  "controller": { "agent": "opencode", "cwd": "./controller" },
   "agents": {
     "claude": {
       "command": "claude",

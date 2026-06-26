@@ -1,0 +1,4 @@
+PC AI Remote Controller on :8787
+  local:   http://localhost:8787?token=change-me-to-a-long-random-string
+  network: http://192.168.194.252:8787?token=change-me-to-a-long-random-string
+  network: http://192.168.100.16:8787?token=change-me-to-a-long-random-string
