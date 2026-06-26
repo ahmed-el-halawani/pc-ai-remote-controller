@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake Game</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: 'Courier New', monospace;
+      color: #e0e0e0;
+    }
+    .container {
+      text-align: center;
+    }
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 10px;
+      color: #00ff88;
+    }
+    #scoreboard {
+      display: flex;
+      justify-content: space-between;
+      width: 400px;
+      margin: 0 auto 10px;
+      font-size: 1.1rem;
+    }
+    canvas {
+      border: 2px solid #00ff88;
+      border-radius: 4px;
+      display: block;
+      margin: 0 auto;
+      background: #16213e;
+    }
+    #message {
+      margin-top: 15px;
+      font-size: 1rem;
+      height: 24px;
+      color: #f5c842;
+    }
+    .controls {
+      margin-top: 15px;
+      font-size: 0.8rem;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>SNAKE</h1>
+    <div id="scoreboard">
+      <span>Score: <b id="score">0</b></span>
+      <span>High: <b id="highscore">0</b></span>
+    </div>
+    <canvas id="game" width="400" height="400"></canvas>
+    <div id="message">Press any arrow key to start</div>
+    <div class="controls">Arrow keys or WASD to move &bull; Space to pause &bull; R to restart</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const highscoreEl = document.getElementById('highscore');
+    const messageEl = document.getElementById('message');
+
+    const GRID = 20;
+    const COLS = canvas.width / GRID;
+    const ROWS = canvas.height / GRID;
+
+    let snake, direction, nextDirection, food, score, highscore, speed, gameLoop, state;
+
+    highscore = +(localStorage.getItem('snakeHigh') || 0);
+    highscoreEl.textContent = highscore;
+
+    function init() {
+      snake = [{ x: 10, y: 10 }];
+      direction = { x: 1, y: 0 };
+      nextDirection = { x: 1, y: 0 };
+      score = 0;
+      speed = 120;
+      state = 'waiting'; // waiting | playing | paused | gameover
+      scoreEl.textContent = score;
+      messageEl.textContent = 'Press any arrow key to start';
+      placeFood();
+      draw();
+    }
+
+    function placeFood() {
+      do {
+        food = {
+          x: Math.floor(Math.random() * COLS),
+          y: Math.floor(Math.random() * ROWS)
+        };
+      } while (snake.some(s => s.x === food.x && s.y === food.y));
+    }
+
+    function draw() {
+      // background
+      ctx.fillStyle = '#16213e';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // grid (subtle)
+      ctx.strokeStyle = '#1a2744';
+      for (let i = 0; i < COLS; i++) {
+        for (let j = 0; j < ROWS; j++) {
+          ctx.strokeRect(i * GRID, j * GRID, GRID, GRID);
+        }
+      }
+
+      // food
+      ctx.fillStyle = '#ff4757';
+      ctx.shadowColor = '#ff4757';
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(food.x * GRID + GRID / 2, food.y * GRID + GRID / 2, GRID / 2 - 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // snake
+      snake.forEach((seg, i) => {
+        const isHead = i === 0;
+        const brightness = isHead ? 1 : 0.7 - (i * 0.03);
+        ctx.fillStyle = isHead ? '#00ff88' : `rgba(0, 255, 136, ${Math.max(0.3, brightness)})`;
+        ctx.shadowColor = isHead ? '#00ff88' : 'transparent';
+        ctx.shadowBlur = isHead ? 10 : 0;
+        const padding = isHead ? 1 : 2;
+        ctx.fillRect(seg.x * GRID + padding, seg.y * GRID + padding, GRID - padding * 2, GRID - padding * 2);
+      });
+      ctx.shadowBlur = 0;
+    }
+
+    function update() {
+      if (state !== 'playing') return;
+
+      direction = { ...nextDirection };
+      const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+
+      // wrap around
+      if (head.x < 0) head.x = COLS - 1;
+      else if (head.x >= COLS) head.x = 0;
+      if (head.y < 0) head.y = ROWS - 1;
+      else if (head.y >= ROWS) head.y = 0;
+
+      // self collision
+      if (snake.some(s => s.x === head.x && s.y === head.y)) {
+        gameOver();
+        return;
+      }
+
+      snake.unshift(head);
+
+      if (head.x === food.x && head.y === food.y) {
+        score++;
+        scoreEl.textContent = score;
+        if (score > highscore) {
+          highscore = score;
+          highscoreEl.textContent = highscore;
+          localStorage.setItem('snakeHigh', highscore);
+        }
+        placeFood();
+        // speed up
+        if (speed > 50) speed -= 2;
+      } else {
+        snake.pop();
+      }
+
+      draw();
+    }
+
+    function startLoop() {
+      clearInterval(gameLoop);
+      gameLoop = setInterval(update, speed);
+    }
+
+    function gameOver() {
+      state = 'gameover';
+      clearInterval(gameLoop);
+      messageEl.textContent = 'Game Over! Press R to restart';
+
+      // flash snake red
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    document.addEventListener('keydown', e => {
+      const key = e.key.toLowerCase();
+      const dir = {
+        arrowup:    { x: 0, y: -1 }, w: { x: 0, y: -1 },
+        arrowdown:  { x: 0, y: 1 },  s: { x: 0, y: 1 },
+        arrowleft:  { x: -1, y: 0 }, a: { x: -1, y: 0 },
+        arrowright: { x: 1, y: 0 },  d: { x: 1, y: 0 },
+      };
+
+      if (dir[key]) {
+        e.preventDefault();
+        const newDir = dir[key];
+        // prevent reversing
+        if (newDir.x === -direction.x && newDir.y === -direction.y) return;
+        nextDirection = newDir;
+
+        if (state === 'waiting' || state === 'gameover') {
+          if (state === 'gameover') init();
+          state = 'playing';
+          messageEl.textContent = '';
+          startLoop();
+        }
+      }
+
+      if (key === ' ') {
+        e.preventDefault();
+        if (state === 'playing') {
+          state = 'paused';
+          clearInterval(gameLoop);
+          messageEl.textContent = 'Paused - press Space to resume';
+        } else if (state === 'paused') {
+          state = 'playing';
+          messageEl.textContent = '';
+          startLoop();
+        }
+      }
+
+      if (key === 'r') {
+        init();
+        if (state === 'waiting') {
+          // keep waiting
+        }
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

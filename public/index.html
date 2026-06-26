@@ -22,8 +22,19 @@
   .view { position: absolute; inset: 0; display: none; flex-direction: column; }
   .view.show { display: flex; }
   #term { flex: 1; padding: 4px; }
-  #controls { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; background: #161b22; border-top: 1px solid #30363d; max-height: 38vh; overflow: auto; }
+  #controls { display: none; flex-wrap: wrap; gap: 4px; padding: 6px; background: #161b22; border-top: 1px solid #30363d; max-height: 38vh; overflow: auto; }
+  #controls.open { display: flex; }
   #controls select, #controls button { font-size: 12px; padding: 4px 6px; }
+  /* Claude-mobile-style composer */
+  #inputbar { display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
+  #inputbar .box { flex: 1; display: flex; align-items: flex-end; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 2px 4px 2px 8px; }
+  #msgInput { flex: 1; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 9px 4px; resize: none; max-height: 30vh; }
+  #msgInput:focus { outline: none; }
+  #inputbar .icon { background: transparent; border: none; color: #8b949e; font-size: 17px; padding: 7px; border-radius: 50%; line-height: 1; }
+  #inputbar .icon.rec { color: #fb6a3c; }
+  #modeChip { background: #21262d; border: 1px solid #30363d; border-radius: 18px; padding: 8px 12px; font-size: 13px; color: #c9d1d9; flex: none; }
+  #send { background: #fb6a3c; border: none; color: #fff; width: 40px; height: 40px; border-radius: 50%; font-size: 17px; flex: none; }
+  #send:disabled { background: #30363d; color: #8b949e; }
   .grp { display: flex; align-items: center; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 2px 4px; }
   .grp label { color: #8b949e; font-size: 11px; }
   #screen img { width: 100%; height: 100%; object-fit: contain; }
@@ -55,6 +66,15 @@
   <div class="view" id="vSession">
     <div id="term"></div>
     <div id="controls"></div>
+    <div id="inputbar">
+      <button id="modeChip">⚡ Auto</button>
+      <div class="box">
+        <textarea id="msgInput" rows="1" placeholder="Message…"></textarea>
+        <button class="icon" id="atBtn" title="Mention file">＠</button>
+        <button class="icon" id="micBtn" title="Dictate">🎤</button>
+      </div>
+      <button id="send" title="Send">➤</button>
+    </div>
   </div>
   <div class="view" id="screen"><img id="shot" alt="screen" /></div>
 </div>
@@ -93,6 +113,7 @@ const api = async (p, opt = {}) => {
 
 let agents = {};        // descriptors
 let active = null;      // active session id
+let activeSession = null; // active session meta object
 let term, fit, ws;      // xterm + websocket for active session
 
 // ---- views ----
@@ -131,6 +152,8 @@ async function refresh() {
 // ---- terminal session ----
 function openSession(s) {
   active = s.id;
+  activeSession = s;
+  qs("#modeChip").textContent = "⚡ " + s.agent;
   showView("vSession");
   if (!term) {
     term = new Terminal({ fontSize: 13, cursorBlink: true, theme: { background: "#0d1117" } });
@@ -153,6 +176,31 @@ function doFit() {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
 }
 addEventListener("resize", doFit);
+
+// ---- composer (Claude-mobile-style input bar -> writes to the pty) ----
+const msgInput = qs("#msgInput");
+function growInput() { msgInput.style.height = "auto"; msgInput.style.height = Math.min(msgInput.scrollHeight, window.innerHeight * 0.3) + "px"; }
+function sendMsg() {
+  const v = msgInput.value;
+  if (!v.trim() || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ t: "i", d: v + "\r" }));
+  msgInput.value = ""; growInput(); msgInput.focus();
+}
+msgInput.addEventListener("input", growInput);
+msgInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+qs("#send").onclick = sendMsg;
+qs("#atBtn").onclick = () => { if (activeSession) openFilePicker(activeSession); };
+qs("#modeChip").onclick = () => qs("#controls").classList.toggle("open");
+
+// voice dictation via the browser's native SpeechRecognition (no dependency)
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SR) {
+  const rec = new SR(); rec.interimResults = false; rec.continuous = false;
+  let recording = false;
+  rec.onresult = (e) => { const t = e.results[0][0].transcript; msgInput.value += (msgInput.value && !msgInput.value.endsWith(" ") ? " " : "") + t; growInput(); };
+  rec.onend = () => { recording = false; qs("#micBtn").classList.remove("rec"); };
+  qs("#micBtn").onclick = () => { if (recording) { rec.stop(); return; } try { rec.start(); recording = true; qs("#micBtn").classList.add("rec"); } catch {} };
+} else { qs("#micBtn").style.display = "none"; }
 
 // ---- per-agent control panel ----
 function buildControls(s) {
@@ -208,8 +256,8 @@ async function ffLoad() {
       if (e.dir) { ffCwd = r.path + "/" + e.name; ffLoad(); }
       else {
         const rel = (r.path + "/" + e.name).replace(ffSession.cwd, "").replace(/^[\\/]/, "");
-        await api("/apply", { method: "POST", body: JSON.stringify({ session: ffSession.id, write: "@" + rel + " " }) });
-        qs("#dlgFile").close();
+        const m = qs("#msgInput"); m.value += (m.value && !m.value.endsWith(" ") ? " " : "") + "@" + rel + " ";
+        growInput(); m.focus(); qs("#dlgFile").close();
       }
     };
     l.appendChild(div);
