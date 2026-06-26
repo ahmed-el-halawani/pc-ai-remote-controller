@@ -1,0 +1,38 @@
+{
+  "port": 8787,
+  "token": "change-me-to-a-long-random-string",
+  "workspacesRoot": "C:/Users/tmcgu/Desktop/ai projects",
+  "globalSkillsDir": "C:/Users/tmcgu/.claude/skills",
+  "screenshotMs": 1000,
+  "idleSeconds": 20,
+  "ntfyTopic": "",
+  "rustdeskId": "",
+  "controller": { "agent": "opencode", "cwd": "C:/Users/tmcgu/Desktop/ai projects" },
+  "agents": {
+    "claude": {
+      "command": "claude",
+      "args": [],
+      "fileMention": true,
+      "skillsDirs": ["C:/Users/tmcgu/.claude/skills"],
+      "models": [
+        { "label": "Opus 4.8", "slash": "/model claude-opus-4-8" },
+        { "label": "Sonnet 4.6", "slash": "/model claude-sonnet-4-6" },
+        { "label": "Haiku 4.5", "slash": "/model claude-haiku-4-5-20251001" }
+      ],
+      "modes": [
+        { "label": "Plan", "slash": "/plan" },
+        { "label": "Normal", "text": "normal mode" }
+      ],
+      "efforts": []
+    },
+    "opencode": {
+      "command": "opencode",
+      "args": [],
+      "fileMention": true,
+      "skillsDirs": [],
+      "models": [],
+      "modes": [],
+      "efforts": []
+    }
+  }
+}

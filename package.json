@@ -1,0 +1,17 @@
+{
+  "name": "pc-ai-remote-controller",
+  "version": "0.1.0",
+  "description": "Drive AI coding CLIs on your PC from your phone",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-pty": "^1.0.0",
+    "screenshot-desktop": "^1.15.0",
+    "ws": "^8.18.0"
+  }
+}
