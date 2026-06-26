@@ -9,3 +9,7 @@ s.out
 s.err
 boot.out
 boot.err
+
+# controller workspace is a scratch space; keep only its instructions
+controller/*
+!controller/AGENTS.md
