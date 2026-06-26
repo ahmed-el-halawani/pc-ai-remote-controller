@@ -22,9 +22,9 @@
   .view { position: absolute; inset: 0; display: none; flex-direction: column; }
   .view.show { display: flex; }
   #term { flex: 1; padding: 4px; }
-  #controls { display: none; flex-wrap: wrap; gap: 4px; padding: 6px; background: #161b22; border-top: 1px solid #30363d; max-height: 38vh; overflow: auto; }
-  #controls.open { display: flex; }
-  #controls select, #controls button { font-size: 12px; padding: 4px 6px; }
+  #optbar { display: flex; gap: 6px; padding: 6px 8px; background: #161b22; border-top: 1px solid #30363d; overflow-x: auto; }
+  #optbar:empty { display: none; }
+  .optbtn { background: #21262d; border: 1px solid #30363d; border-radius: 16px; padding: 6px 12px; font-size: 13px; color: #c9d1d9; white-space: nowrap; flex: none; }
   /* Claude-mobile-style composer */
   #inputbar { display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
   #inputbar .box { flex: 1; display: flex; align-items: flex-end; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 2px 4px 2px 8px; }
@@ -32,7 +32,6 @@
   #msgInput:focus { outline: none; }
   #inputbar .icon { background: transparent; border: none; color: #8b949e; font-size: 17px; padding: 7px; border-radius: 50%; line-height: 1; }
   #inputbar .icon.rec { color: #fb6a3c; }
-  #modeChip { background: #21262d; border: 1px solid #30363d; border-radius: 18px; padding: 8px 12px; font-size: 13px; color: #c9d1d9; flex: none; }
   #send { background: #fb6a3c; border: none; color: #fff; width: 40px; height: 40px; border-radius: 50%; font-size: 17px; flex: none; }
   #send:disabled { background: #30363d; color: #8b949e; }
   .grp { display: flex; align-items: center; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 2px 4px; }
@@ -75,9 +74,8 @@
   <div class="view show" id="home"></div>
   <div class="view" id="vSession">
     <div id="term"></div>
-    <div id="controls"></div>
+    <div id="optbar"></div>
     <div id="inputbar">
-      <button id="modeChip">⚡ Auto</button>
       <div class="box">
         <button class="icon" id="addBtn" title="Skills &amp; context">＋</button>
         <textarea id="msgInput" rows="1" placeholder="Message…"></textarea>
@@ -97,6 +95,11 @@
   <div class="row"><button id="fsUp">⬆ up</button><input id="fsNew" placeholder="new folder name" class="grow" /><button id="fsMk">mkdir</button></div>
   <div id="fsList"></div>
   <div class="row" style="justify-content:flex-end"><button id="nCancel">Cancel</button><button id="nCreate" class="primary">Create</button></div>
+</dialog>
+
+<dialog id="dlgMenu" class="sheet">
+  <div class="tabs"><b id="menuTitle"></b><span style="flex:1"></span><button id="menuClose">Close</button></div>
+  <div id="menuList" class="list"></div>
 </dialog>
 
 <dialog id="dlgAdd" class="sheet">
@@ -174,7 +177,6 @@ async function refresh() {
 function openSession(s) {
   active = s.id;
   activeSession = s;
-  qs("#modeChip").textContent = "⚡ " + s.agent;
   showView("vSession");
   if (!term) {
     term = new Terminal({ fontSize: 13, cursorBlink: true, theme: { background: "#0d1117" } });
@@ -188,7 +190,7 @@ function openSession(s) {
   ws = new WebSocket(`${proto}://${location.host}/ws?session=${s.id}&token=${encodeURIComponent(TOKEN)}`);
   ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.t === "o") term.write(m.d); else if (m.t === "exit") term.write("\r\n[process exited]\r\n"); };
   ws.onopen = () => doFit();
-  buildControls(s);
+  buildOptbar(s);
   refresh();
   setTimeout(doFit, 50);
 }
@@ -210,7 +212,6 @@ function sendMsg() {
 msgInput.addEventListener("input", growInput);
 msgInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
 qs("#send").onclick = sendMsg;
-qs("#modeChip").onclick = () => qs("#controls").classList.toggle("open");
 
 // voice dictation via the browser's native SpeechRecognition (no dependency)
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -222,25 +223,27 @@ if (SR) {
   qs("#micBtn").onclick = () => { if (recording) { rec.stop(); return; } try { rec.start(); recording = true; qs("#micBtn").classList.add("rec"); } catch {} };
 } else { qs("#micBtn").style.display = "none"; }
 
-// ---- per-agent control panel ----
-function buildControls(s) {
-  const c = qs("#controls"); c.innerHTML = "";
+// ---- per-agent option buttons (Model / Mode / Effort) ----
+function openMenu(title, items, onPick) {
+  qs("#menuTitle").textContent = title;
+  const l = qs("#menuList"); l.innerHTML = "";
+  if (!items.length) l.innerHTML = "<div class='pill'>None for this agent</div>";
+  items.forEach((it) => { const d = document.createElement("div"); d.textContent = it.label; d.onclick = () => { onPick(it); qs("#dlgMenu").close(); }; l.appendChild(d); });
+  qs("#dlgMenu").showModal();
+}
+qs("#menuClose").onclick = () => qs("#dlgMenu").close();
+
+function buildOptbar(s) {
+  const bar = qs("#optbar"); bar.innerHTML = "";
   const d = agents[s.agent] || {};
   const apply = (body) => api("/apply", { method: "POST", body: JSON.stringify({ session: s.id, ...body }) });
-  const picker = (label, opts) => {
+  const pick = (o) => { if (o.slash || o.text) apply({ send: o.slash || o.text }); else if (o.flag) apply({ respawnArgs: o.flag.split(" ").filter(Boolean) }); };
+  const btn = (label, opts) => {
     if (!opts || !opts.length) return;
-    const g = document.createElement("div"); g.className = "grp";
-    const sel = document.createElement("select");
-    sel.innerHTML = `<option value="">${label}…</option>` + opts.map((o, i) => `<option value="${i}">${o.label}</option>`).join("");
-    sel.onchange = () => {
-      const o = opts[sel.value]; if (!o) return;
-      if (o.slash || o.text) apply({ send: o.slash || o.text });
-      else if (o.flag) apply({ respawnArgs: o.flag.split(" ").filter(Boolean) });
-      sel.value = "";
-    };
-    g.append(Object.assign(document.createElement("label"), { textContent: label }), sel); c.appendChild(g);
+    const b = document.createElement("button"); b.className = "optbtn"; b.textContent = label + " ▾";
+    b.onclick = () => openMenu(label, opts, pick); bar.appendChild(b);
   };
-  picker("model", d.models); picker("mode", d.modes); picker("effort", d.efforts);
+  btn("Model", d.models); btn("Mode", d.modes); btn("Effort", d.efforts);
 }
 
 // ---- skills + context menu (the "+" sheet) ----
@@ -267,16 +270,19 @@ qs("#addClose").onclick = () => qs("#dlgAdd").close();
 
 // Skills tab
 let allSkills = [];
-async function loadSkills() { allSkills = await api("/skills?agent=" + activeSession.agent).catch(() => []); renderSkills(); }
+async function loadSkills() {
+  allSkills = await api("/skills?agent=" + activeSession.agent + "&cwd=" + encodeURIComponent(activeSession.cwd)).catch(() => []);
+  renderSkills();
+}
 function renderSkills() {
   const q = qs("#skSearch").value.toLowerCase();
   const l = qs("#skList"); l.innerHTML = "";
-  const items = allSkills.filter((s) => s.name.toLowerCase().includes(q));
+  const items = allSkills.filter((s) => (s.name + " " + (s.description || "")).toLowerCase().includes(q));
   if (!items.length) { l.innerHTML = "<div class='pill'>No skills found</div>"; return; }
   items.forEach((s) => {
     const d = document.createElement("div");
-    d.innerHTML = `<span>✦ ${s.name}</span><span class="src">${s.source}</span>`;
-    d.onclick = () => { insertText("/" + s.name); qs("#dlgAdd").close(); };
+    d.innerHTML = `<div style="flex:1;min-width:0"><div>✦ ${s.name}</div>${s.description ? `<small class="pill">${s.description}</small>` : ""}</div><span class="src">${s.source}</span>`;
+    d.onclick = () => { insertText(s.invoke || ("/" + s.name)); qs("#dlgAdd").close(); };
     l.appendChild(d);
   });
 }

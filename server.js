@@ -29,6 +29,7 @@ const cfg = JSON.parse(fs.readFileSync(CFG_PATH, "utf8"));
 const SESS_PATH = path.join(__dirname, "sessions.json");
 const BUF_CAP = 100 * 1024; // ring buffer per session (~100KB of output)
 const isWin = process.platform === "win32";
+const CLAUDE_HOME = cfg.claudeHome || path.join(os.homedir(), ".claude");
 
 // ---- session registry -----------------------------------------------------
 // id -> { meta:{id,name,cwd,agent,role}, pty, buf, subs:Set<ws>, busy, idleTimer }
@@ -201,24 +202,67 @@ app.post("/fs", (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// skills: agent-specific dirs + global dir
+// skills: user dirs + every installed Claude plugin + project (.claude/skills under cwd)
+function readFrontmatter(file) {
+  try {
+    const txt = fs.readFileSync(file, "utf8").slice(0, 4000);
+    const m = txt.match(/^---\s*([\s\S]*?)\r?\n---/);
+    const lines = (m ? m[1] : "").split(/\r?\n/);
+    const grab = (k) => {
+      for (let i = 0; i < lines.length; i++) {
+        const r = lines[i].match(new RegExp("^" + k + ":\\s*(.*)$"));
+        if (!r) continue;
+        let v = r[1].trim();
+        if (v && !/^[>|][-+]?$/.test(v)) return v.replace(/^["']|["']$/g, ""); // inline value
+        const out = []; // YAML block scalar (>, |): collect following indented lines
+        for (let j = i + 1; j < lines.length; j++) {
+          if (/^\s+\S/.test(lines[j])) out.push(lines[j].trim());
+          else if (lines[j].trim() === "") continue;
+          else break;
+        }
+        return out.join(" ").trim();
+      }
+      return "";
+    };
+    return { name: grab("name"), description: grab("description"), trigger: grab("trigger") };
+  } catch { return {}; }
+}
+function scanSkillsDir(dir, source, seen, out) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const skillDir = path.join(dir, e.name);
+    const key = path.resolve(skillDir);
+    if (seen.has(key)) continue;
+    const md = path.join(skillDir, "SKILL.md");
+    if (!fs.existsSync(md)) continue;
+    seen.add(key);
+    const fm = readFrontmatter(md);
+    out.push({ name: e.name, description: fm.description || "", source, invoke: fm.trigger || "/" + e.name });
+  }
+}
 app.get("/skills", (req, res) => {
   const a = cfg.agents[req.query.agent] || {};
-  const out = [];
-  const seen = new Set();
-  const scan = (d, source) => {
-    const key = path.resolve(d);
-    if (seen.has(key)) return; // don't list the same dir twice (e.g. agent dir == global)
-    seen.add(key);
+  const cwd = req.query.cwd;
+  const out = [], seen = new Set();
+  // user-configured dirs
+  for (const d of a.skillsDirs || []) scanSkillsDir(d, "user", seen, out);
+  if (cfg.globalSkillsDir) scanSkillsDir(cfg.globalSkillsDir, "user", seen, out);
+  // installed Claude plugins
+  if (a.claudeSkills) {
     try {
-      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-        if (e.isDirectory()) out.push({ name: e.name, source });
-        else if (e.name.endsWith(".md")) out.push({ name: e.name.replace(/\.md$/, ""), source });
+      const idx = JSON.parse(fs.readFileSync(path.join(CLAUDE_HOME, "plugins", "installed_plugins.json"), "utf8"));
+      for (const [key, installs] of Object.entries(idx.plugins || {})) {
+        const pluginName = key.split("@")[0];
+        for (const inst of installs) {
+          if (inst.installPath) scanSkillsDir(path.join(inst.installPath, "skills"), "plugin:" + pluginName, seen, out);
+        }
       }
     } catch {}
-  };
-  for (const d of a.skillsDirs || []) scan(d, "agent");
-  if (cfg.globalSkillsDir) scan(cfg.globalSkillsDir, "global");
+  }
+  // project skills under the session's cwd
+  if (cwd) scanSkillsDir(path.join(path.resolve(cwd), ".claude", "skills"), "project", seen, out);
   res.json(out);
 });
 
