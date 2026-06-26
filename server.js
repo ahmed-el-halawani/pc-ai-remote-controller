@@ -4,9 +4,20 @@ const path = require("path");
 const http = require("http");
 const os = require("os");
 const express = require("express");
+const { execFile } = require("child_process");
 const { WebSocketServer } = require("ws");
 const pty = require("node-pty");
-const screenshot = require("screenshot-desktop");
+
+// Native Windows screen grab via PowerShell + System.Drawing (no native dep).
+function captureScreen() {
+  return new Promise((resolve, reject) => {
+    if (!isWin) return reject(new Error("screenshot only implemented on Windows"));
+    const out = path.join(os.tmpdir(), "pcair-shot.jpg");
+    execFile("powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "screen-capture.ps1"), "-Out", out],
+      (err) => err ? reject(err) : fs.readFile(out, (e, buf) => e ? reject(e) : resolve(buf)));
+  });
+}
 
 // ---- config ---------------------------------------------------------------
 const CFG_PATH = path.join(__dirname, "config.json");
@@ -212,7 +223,7 @@ let shotBuf = null, shotAt = 0;
 app.get("/screen.jpg", async (_req, res) => {
   try {
     if (!shotBuf || Date.now() - shotAt > (cfg.screenshotMs || 1000)) {
-      shotBuf = await screenshot({ format: "jpg" });
+      shotBuf = await captureScreen();
       shotAt = Date.now();
     }
     res.set("Content-Type", "image/jpeg").set("Cache-Control", "no-store").send(shotBuf);
