@@ -51,6 +51,16 @@
   #fsList div { padding: 8px; border-bottom: 1px solid #21262d; }
   #fsList div:active { background: #21262d; }
   .pill { font-size: 11px; color: #8b949e; }
+  /* skills + context bottom sheet */
+  dialog.sheet { width: min(96vw, 520px); max-height: 82vh; }
+  .tabs { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .tabs button.on { background: #1f6feb; border-color: #388bfd; }
+  .search { width: 100%; margin-bottom: 6px; }
+  .list { max-height: 58vh; overflow: auto; border: 1px solid #30363d; border-radius: 6px; }
+  .list div { padding: 10px; border-bottom: 1px solid #21262d; display: flex; gap: 8px; align-items: center; }
+  .list div:active { background: #21262d; }
+  .src { margin-left: auto; font-size: 11px; color: #8b949e; }
+  .crumbs { font-size: 12px; color: #8b949e; margin: 4px 0; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -69,8 +79,8 @@
     <div id="inputbar">
       <button id="modeChip">⚡ Auto</button>
       <div class="box">
+        <button class="icon" id="addBtn" title="Skills &amp; context">＋</button>
         <textarea id="msgInput" rows="1" placeholder="Message…"></textarea>
-        <button class="icon" id="atBtn" title="Mention file">＠</button>
         <button class="icon" id="micBtn" title="Dictate">🎤</button>
       </div>
       <button id="send" title="Send">➤</button>
@@ -89,11 +99,22 @@
   <div class="row" style="justify-content:flex-end"><button id="nCancel">Cancel</button><button id="nCreate" class="primary">Create</button></div>
 </dialog>
 
-<dialog id="dlgFile">
-  <h3>Mention file</h3>
-  <div class="row"><button id="ffUp">⬆ up</button><span id="ffPath" class="grow pill"></span></div>
-  <div id="ffList" style="max-height:46vh;overflow:auto"></div>
-  <div class="row" style="justify-content:flex-end"><button id="ffCancel">Close</button></div>
+<dialog id="dlgAdd" class="sheet">
+  <div class="tabs">
+    <button id="tabSkills" class="on">✦ Skills</button>
+    <button id="tabCtx">＠ Context</button>
+    <span style="flex:1"></span>
+    <button id="addClose">Done</button>
+  </div>
+  <div id="paneSkills">
+    <input id="skSearch" class="search" placeholder="Search skills…" />
+    <div id="skList" class="list"></div>
+  </div>
+  <div id="paneCtx" style="display:none">
+    <div class="row"><button id="ctxUp">⬆ up</button><button id="ctxAddDir">＋ this folder</button></div>
+    <div id="ctxCrumb" class="crumbs"></div>
+    <div id="ctxList" class="list"></div>
+  </div>
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
@@ -189,7 +210,6 @@ function sendMsg() {
 msgInput.addEventListener("input", growInput);
 msgInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
 qs("#send").onclick = sendMsg;
-qs("#atBtn").onclick = () => { if (activeSession) openFilePicker(activeSession); };
 qs("#modeChip").onclick = () => qs("#controls").classList.toggle("open");
 
 // voice dictation via the browser's native SpeechRecognition (no dependency)
@@ -221,50 +241,64 @@ function buildControls(s) {
     g.append(Object.assign(document.createElement("label"), { textContent: label }), sel); c.appendChild(g);
   };
   picker("model", d.models); picker("mode", d.modes); picker("effort", d.efforts);
-  // skills
-  const gs = document.createElement("div"); gs.className = "grp";
-  const skBtn = document.createElement("button"); skBtn.textContent = "Skills";
-  skBtn.onclick = async () => {
-    const sk = await api("/skills?agent=" + s.agent);
-    const sel = gs.querySelector("select") || document.createElement("select");
-    sel.innerHTML = `<option value="">skill…</option>` + sk.map((x) => `<option>${x.name} (${x.source})</option>`).join("");
-    sel.onchange = () => { const n = sel.value.split(" (")[0]; if (n) apply({ send: "/" + n }); sel.value = ""; };
-    if (!gs.contains(sel)) gs.appendChild(sel);
-  };
-  gs.appendChild(skBtn); c.appendChild(gs);
-  // @file
-  if (d.fileMention) {
-    const fb = document.createElement("button"); fb.textContent = "@ file";
-    fb.onclick = () => openFilePicker(s);
-    const g = document.createElement("div"); g.className = "grp"; g.appendChild(fb); c.appendChild(g);
-  }
 }
 
-// ---- file mention picker ----
-let ffCwd = "";
-async function openFilePicker(s) {
-  ffCwd = s.cwd; ffSession = s; qs("#dlgFile").showModal(); ffLoad();
+// ---- skills + context menu (the "+" sheet) ----
+function insertText(t) {
+  const m = qs("#msgInput");
+  m.value += (m.value && !m.value.endsWith(" ") ? " " : "") + t + " ";
+  growInput(); m.focus();
 }
-let ffSession;
-async function ffLoad() {
-  const r = await api("/fs?mode=all&path=" + encodeURIComponent(ffCwd));
-  qs("#ffPath").textContent = r.path; ffCwd = r.path;
-  const l = qs("#ffList"); l.innerHTML = "";
-  r.entries.forEach((e) => {
-    const div = document.createElement("div"); div.textContent = (e.dir ? "📁 " : "📄 ") + e.name;
-    div.onclick = async () => {
-      if (e.dir) { ffCwd = r.path + "/" + e.name; ffLoad(); }
-      else {
-        const rel = (r.path + "/" + e.name).replace(ffSession.cwd, "").replace(/^[\\/]/, "");
-        const m = qs("#msgInput"); m.value += (m.value && !m.value.endsWith(" ") ? " " : "") + "@" + rel + " ";
-        growInput(); m.focus(); qs("#dlgFile").close();
-      }
-    };
-    l.appendChild(div);
+const relTo = (base, full) => full.replace(base, "").replace(/^[\\/]/, "") || ".";
+
+function openAdd(tab) { if (!activeSession) return; qs("#dlgAdd").showModal(); switchAddTab(tab || "skills"); }
+function switchAddTab(t) {
+  const sk = t === "skills";
+  qs("#paneSkills").style.display = sk ? "" : "none";
+  qs("#paneCtx").style.display = sk ? "none" : "";
+  qs("#tabSkills").classList.toggle("on", sk);
+  qs("#tabCtx").classList.toggle("on", !sk);
+  if (sk) loadSkills(); else ctxLoad(activeSession.cwd);
+}
+qs("#addBtn").onclick = () => openAdd("skills");
+qs("#tabSkills").onclick = () => switchAddTab("skills");
+qs("#tabCtx").onclick = () => switchAddTab("ctx");
+qs("#addClose").onclick = () => qs("#dlgAdd").close();
+
+// Skills tab
+let allSkills = [];
+async function loadSkills() { allSkills = await api("/skills?agent=" + activeSession.agent).catch(() => []); renderSkills(); }
+function renderSkills() {
+  const q = qs("#skSearch").value.toLowerCase();
+  const l = qs("#skList"); l.innerHTML = "";
+  const items = allSkills.filter((s) => s.name.toLowerCase().includes(q));
+  if (!items.length) { l.innerHTML = "<div class='pill'>No skills found</div>"; return; }
+  items.forEach((s) => {
+    const d = document.createElement("div");
+    d.innerHTML = `<span>✦ ${s.name}</span><span class="src">${s.source}</span>`;
+    d.onclick = () => { insertText("/" + s.name); qs("#dlgAdd").close(); };
+    l.appendChild(d);
   });
 }
-qs("#ffUp").onclick = () => { ffCwd = ffCwd.replace(/[\\/][^\\/]+[\\/]?$/, ""); ffLoad(); };
-qs("#ffCancel").onclick = () => qs("#dlgFile").close();
+qs("#skSearch").oninput = renderSkills;
+
+// Context tab (browse folder, add a file or a whole folder as @mention)
+let ctxCwd = "";
+async function ctxLoad(p) {
+  const r = await api("/fs?mode=all&path=" + encodeURIComponent(p));
+  ctxCwd = r.path; qs("#ctxCrumb").textContent = r.path;
+  const l = qs("#ctxList"); l.innerHTML = "";
+  r.entries.forEach((e) => {
+    const d = document.createElement("div"); d.textContent = (e.dir ? "📁 " : "📄 ") + e.name;
+    d.onclick = () => {
+      if (e.dir) ctxLoad(r.path + "/" + e.name);
+      else { insertText("@" + relTo(activeSession.cwd, r.path + "/" + e.name)); qs("#dlgAdd").close(); }
+    };
+    l.appendChild(d);
+  });
+}
+qs("#ctxUp").onclick = () => ctxLoad(ctxCwd.replace(/[\\/][^\\/]+[\\/]?$/, ""));
+qs("#ctxAddDir").onclick = () => { insertText("@" + relTo(activeSession.cwd, ctxCwd)); qs("#dlgAdd").close(); };
 
 // ---- new session dialog ----
 let nCwd = "";
