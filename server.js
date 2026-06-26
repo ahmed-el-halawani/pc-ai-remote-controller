@@ -205,7 +205,11 @@ app.post("/fs", (req, res) => {
 app.get("/skills", (req, res) => {
   const a = cfg.agents[req.query.agent] || {};
   const out = [];
+  const seen = new Set();
   const scan = (d, source) => {
+    const key = path.resolve(d);
+    if (seen.has(key)) return; // don't list the same dir twice (e.g. agent dir == global)
+    seen.add(key);
     try {
       for (const e of fs.readdirSync(d, { withFileTypes: true })) {
         if (e.isDirectory()) out.push({ name: e.name, source });
