@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0d1117" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<title>PC AI Remote</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: #0d1117; color: #c9d1d9; height: 100dvh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 6px; align-items: center; padding: 8px; background: #161b22; border-bottom: 1px solid #30363d; }
+  header b { flex: 1; font-size: 13px; }
+  button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  button.primary { background: #238636; border-color: #2ea043; }
+  button.active { background: #1f6feb; border-color: #388bfd; }
+  #tabs { display: flex; gap: 6px; overflow-x: auto; padding: 6px 8px; background: #0d1117; border-bottom: 1px solid #30363d; }
+  #tabs button { white-space: nowrap; }
+  #main { flex: 1; position: relative; overflow: hidden; }
+  .view { position: absolute; inset: 0; display: none; flex-direction: column; }
+  .view.show { display: flex; }
+  #term { flex: 1; padding: 4px; }
+  #controls { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; background: #161b22; border-top: 1px solid #30363d; max-height: 38vh; overflow: auto; }
+  #controls select, #controls button { font-size: 12px; padding: 4px 6px; }
+  .grp { display: flex; align-items: center; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 2px 4px; }
+  .grp label { color: #8b949e; font-size: 11px; }
+  #screen img { width: 100%; height: 100%; object-fit: contain; }
+  #home { padding: 12px; overflow: auto; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
+  .card .grow { flex: 1; }
+  .card small { color: #8b949e; display: block; }
+  input, select { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 6px; font-size: 13px; }
+  dialog { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; border-radius: 10px; width: min(94vw, 460px); }
+  dialog h3 { margin: 0 0 8px; }
+  .row { display: flex; gap: 6px; margin: 6px 0; align-items: center; }
+  .row > * { min-width: 0; }
+  #fsList { max-height: 40vh; overflow: auto; border: 1px solid #30363d; border-radius: 6px; }
+  #fsList div { padding: 8px; border-bottom: 1px solid #21262d; }
+  #fsList div:active { background: #21262d; }
+  .pill { font-size: 11px; color: #8b949e; }
+</style>
+</head>
+<body>
+<header>
+  <b>PC AI Remote</b>
+  <button id="btnNew" class="primary">+ Session</button>
+  <button data-view="screen">Screen</button>
+  <button id="btnRust">RustDesk</button>
+</header>
+<div id="tabs"></div>
+<div id="main">
+  <div class="view show" id="home"></div>
+  <div class="view" id="vSession">
+    <div id="term"></div>
+    <div id="controls"></div>
+  </div>
+  <div class="view" id="screen"><img id="shot" alt="screen" /></div>
+</div>
+
+<dialog id="dlgNew">
+  <h3>New session</h3>
+  <div class="row"><input id="nName" placeholder="name (optional)" class="grow" /></div>
+  <div class="row"><label>agent</label><select id="nAgent" class="grow"></select></div>
+  <div class="row"><label>folder</label><span id="nPath" class="grow pill"></span></div>
+  <div class="row"><button id="fsUp">⬆ up</button><input id="fsNew" placeholder="new folder name" class="grow" /><button id="fsMk">mkdir</button></div>
+  <div id="fsList"></div>
+  <div class="row" style="justify-content:flex-end"><button id="nCancel">Cancel</button><button id="nCreate" class="primary">Create</button></div>
+</dialog>
+
+<dialog id="dlgFile">
+  <h3>Mention file</h3>
+  <div class="row"><button id="ffUp">⬆ up</button><span id="ffPath" class="grow pill"></span></div>
+  <div id="ffList" style="max-height:46vh;overflow:auto"></div>
+  <div class="row" style="justify-content:flex-end"><button id="ffCancel">Close</button></div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+const TOKEN = new URLSearchParams(location.search).get("token") || localStorage.getItem("token") || "";
+if (TOKEN) localStorage.setItem("token", TOKEN);
+const qs = (s) => document.querySelector(s);
+const api = async (p, opt = {}) => {
+  const sep = p.includes("?") ? "&" : "?";
+  const r = await fetch(p + sep + "token=" + encodeURIComponent(TOKEN), {
+    ...opt, headers: { "Content-Type": "application/json", ...(opt.headers || {}) },
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  return r.ctHeaderJson === false ? r : r.json();
+};
+
+let agents = {};        // descriptors
+let active = null;      // active session id
+let term, fit, ws;      // xterm + websocket for active session
+
+// ---- views ----
+function showView(id) {
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("show", v.id === id));
+  if (id === "screen") startScreen(); else stopScreen();
+}
+document.querySelectorAll("[data-view]").forEach((b) => b.onclick = () => showView(b.dataset.view));
+
+// ---- home / session list ----
+async function refresh() {
+  const list = await api("/sessions");
+  // tabs
+  const tabs = qs("#tabs"); tabs.innerHTML = "";
+  const home = document.createElement("button"); home.textContent = "≡ Sessions";
+  home.onclick = () => showView("home"); tabs.appendChild(home);
+  list.forEach((s) => {
+    const b = document.createElement("button");
+    b.textContent = (s.alive ? "● " : "○ ") + s.name;
+    b.className = s.id === active ? "active" : "";
+    b.onclick = () => openSession(s);
+    tabs.appendChild(b);
+  });
+  // home cards
+  const h = qs("#home"); h.innerHTML = "";
+  if (!list.length) h.innerHTML = "<p class='pill'>No sessions. Tap “+ Session”.</p>";
+  list.forEach((s) => {
+    const c = document.createElement("div"); c.className = "card";
+    c.innerHTML = `<div class="grow"><b>${s.name}</b><small>${s.agent} · ${s.role} · ${s.alive ? "running" : "stopped"}</small><small class="pill">${s.cwd}</small></div>`;
+    const open = document.createElement("button"); open.textContent = "Open"; open.onclick = () => openSession(s);
+    const del = document.createElement("button"); del.textContent = "✕"; del.onclick = async () => { await api("/sessions/" + s.id, { method: "DELETE" }); if (active === s.id) { active = null; } refresh(); };
+    c.append(open, del); h.appendChild(c);
+  });
+}
+
+// ---- terminal session ----
+function openSession(s) {
+  active = s.id;
+  showView("vSession");
+  if (!term) {
+    term = new Terminal({ fontSize: 13, cursorBlink: true, theme: { background: "#0d1117" } });
+    fit = new FitAddon.FitAddon(); term.loadAddon(fit);
+    term.open(qs("#term"));
+    term.onData((d) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: "i", d })));
+  }
+  term.reset();
+  if (ws) { ws.onclose = null; ws.close(); }
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws?session=${s.id}&token=${encodeURIComponent(TOKEN)}`);
+  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.t === "o") term.write(m.d); else if (m.t === "exit") term.write("\r\n[process exited]\r\n"); };
+  ws.onopen = () => doFit();
+  buildControls(s);
+  refresh();
+  setTimeout(doFit, 50);
+}
+function doFit() {
+  if (!fit) return; try { fit.fit(); } catch {}
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
+}
+addEventListener("resize", doFit);
+
+// ---- per-agent control panel ----
+function buildControls(s) {
+  const c = qs("#controls"); c.innerHTML = "";
+  const d = agents[s.agent] || {};
+  const apply = (body) => api("/apply", { method: "POST", body: JSON.stringify({ session: s.id, ...body }) });
+  const picker = (label, opts) => {
+    if (!opts || !opts.length) return;
+    const g = document.createElement("div"); g.className = "grp";
+    const sel = document.createElement("select");
+    sel.innerHTML = `<option value="">${label}…</option>` + opts.map((o, i) => `<option value="${i}">${o.label}</option>`).join("");
+    sel.onchange = () => {
+      const o = opts[sel.value]; if (!o) return;
+      if (o.slash || o.text) apply({ send: o.slash || o.text });
+      else if (o.flag) apply({ respawnArgs: o.flag.split(" ").filter(Boolean) });
+      sel.value = "";
+    };
+    g.append(Object.assign(document.createElement("label"), { textContent: label }), sel); c.appendChild(g);
+  };
+  picker("model", d.models); picker("mode", d.modes); picker("effort", d.efforts);
+  // skills
+  const gs = document.createElement("div"); gs.className = "grp";
+  const skBtn = document.createElement("button"); skBtn.textContent = "Skills";
+  skBtn.onclick = async () => {
+    const sk = await api("/skills?agent=" + s.agent);
+    const sel = gs.querySelector("select") || document.createElement("select");
+    sel.innerHTML = `<option value="">skill…</option>` + sk.map((x) => `<option>${x.name} (${x.source})</option>`).join("");
+    sel.onchange = () => { const n = sel.value.split(" (")[0]; if (n) apply({ send: "/" + n }); sel.value = ""; };
+    if (!gs.contains(sel)) gs.appendChild(sel);
+  };
+  gs.appendChild(skBtn); c.appendChild(gs);
+  // @file
+  if (d.fileMention) {
+    const fb = document.createElement("button"); fb.textContent = "@ file";
+    fb.onclick = () => openFilePicker(s);
+    const g = document.createElement("div"); g.className = "grp"; g.appendChild(fb); c.appendChild(g);
+  }
+}
+
+// ---- file mention picker ----
+let ffCwd = "";
+async function openFilePicker(s) {
+  ffCwd = s.cwd; ffSession = s; qs("#dlgFile").showModal(); ffLoad();
+}
+let ffSession;
+async function ffLoad() {
+  const r = await api("/fs?mode=all&path=" + encodeURIComponent(ffCwd));
+  qs("#ffPath").textContent = r.path; ffCwd = r.path;
+  const l = qs("#ffList"); l.innerHTML = "";
+  r.entries.forEach((e) => {
+    const div = document.createElement("div"); div.textContent = (e.dir ? "📁 " : "📄 ") + e.name;
+    div.onclick = async () => {
+      if (e.dir) { ffCwd = r.path + "/" + e.name; ffLoad(); }
+      else {
+        const rel = (r.path + "/" + e.name).replace(ffSession.cwd, "").replace(/^[\\/]/, "");
+        await api("/apply", { method: "POST", body: JSON.stringify({ session: ffSession.id, write: "@" + rel + " " }) });
+        qs("#dlgFile").close();
+      }
+    };
+    l.appendChild(div);
+  });
+}
+qs("#ffUp").onclick = () => { ffCwd = ffCwd.replace(/[\\/][^\\/]+[\\/]?$/, ""); ffLoad(); };
+qs("#ffCancel").onclick = () => qs("#dlgFile").close();
+
+// ---- new session dialog ----
+let nCwd = "";
+qs("#btnNew").onclick = async () => {
+  agents = await api("/agents");
+  qs("#nAgent").innerHTML = Object.keys(agents).map((k) => `<option>${k}</option>`).join("");
+  nCwd = ""; await nfsLoad(); qs("#dlgNew").showModal();
+};
+async function nfsLoad() {
+  const r = await api("/fs?path=" + encodeURIComponent(nCwd));
+  nCwd = r.path; qs("#nPath").textContent = r.path;
+  const l = qs("#fsList"); l.innerHTML = "";
+  r.entries.forEach((e) => {
+    const div = document.createElement("div"); div.textContent = "📁 " + e.name;
+    div.onclick = () => { nCwd = r.path + "/" + e.name; nfsLoad(); };
+    l.appendChild(div);
+  });
+}
+qs("#fsUp").onclick = () => { nCwd = nCwd.replace(/[\\/][^\\/]+[\\/]?$/, ""); nfsLoad(); };
+qs("#fsMk").onclick = async () => { const name = qs("#fsNew").value.trim(); if (!name) return; const r = await api("/fs", { method: "POST", body: JSON.stringify({ path: nCwd, name }) }); nCwd = r.path; qs("#fsNew").value = ""; nfsLoad(); };
+qs("#nCancel").onclick = () => qs("#dlgNew").close();
+qs("#nCreate").onclick = async () => {
+  const meta = await api("/sessions", { method: "POST", body: JSON.stringify({ name: qs("#nName").value.trim(), agent: qs("#nAgent").value, cwd: nCwd }) });
+  qs("#dlgNew").close(); await refresh(); openSession({ ...meta, alive: true });
+};
+
+// ---- screen ----
+let shotTimer;
+function startScreen() { const img = qs("#shot"); const tick = () => img.src = "/screen.jpg?token=" + encodeURIComponent(TOKEN) + "&_=" + Date.now(); tick(); shotTimer = setInterval(tick, 1000); }
+function stopScreen() { clearInterval(shotTimer); }
+
+// ---- rustdesk ----
+qs("#btnRust").onclick = async () => {
+  const r = await api("/rustdesk");
+  if (r.id) location.href = "rustdesk://" + r.id; else alert("Set rustdeskId in config.json (and install RustDesk).");
+};
+
+// ---- boot ----
+(async () => {
+  if (!TOKEN) { document.body.innerHTML = "<p style='padding:20px'>Missing ?token=… in the URL.</p>"; return; }
+  agents = await api("/agents").catch(() => ({}));
+  await refresh();
+  setInterval(refresh, 5000); // pick up sessions spawned by the controller
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+})();
+</script>
+</body>
+</html>

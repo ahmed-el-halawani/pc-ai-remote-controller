@@ -154,8 +154,8 @@ app.post("/apply", (req, res) => {
     startPty(s, req.body.respawnArgs);
     return res.json({ ok: true, respawned: true });
   }
-  const send = req.body.send;
-  if (typeof send === "string") { ensureStarted(s).write(send + "\r"); return res.json({ ok: true }); }
+  if (typeof req.body.send === "string") { ensureStarted(s).write(req.body.send + "\r"); return res.json({ ok: true }); }
+  if (typeof req.body.write === "string") { ensureStarted(s).write(req.body.write); return res.json({ ok: true }); } // no Enter (e.g. @file)
   res.status(400).json({ error: "nothing to apply" });
 });
 
