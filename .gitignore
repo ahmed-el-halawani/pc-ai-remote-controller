@@ -3,3 +3,9 @@ config.json
 sessions.json
 *.log
 .DS_Store
+
+# stray redirect artifacts
+s.out
+s.err
+boot.out
+boot.err
