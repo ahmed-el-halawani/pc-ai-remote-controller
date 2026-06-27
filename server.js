@@ -239,30 +239,50 @@ function scanSkillsDir(dir, source, seen, out) {
     if (!fs.existsSync(md)) continue;
     seen.add(key);
     const fm = readFrontmatter(md);
-    out.push({ name: e.name, description: fm.description || "", source, invoke: fm.trigger || "/" + e.name });
+    out.push({ category: "skill", name: e.name, description: fm.description || "", source, invoke: fm.trigger || "/" + e.name });
   }
 }
-app.get("/skills", (req, res) => {
+// collect configured MCP server names from claude config files + opencode (dynamic)
+async function collectMcps(agent, cwd) {
+  const names = new Set();
+  const grab = (obj) => { if (obj && typeof obj === "object") for (const k of Object.keys(obj)) names.add(k); };
+  const tryFile = (p, pick) => { try { pick(JSON.parse(fs.readFileSync(p, "utf8"))); } catch {} };
+  if (cwd) tryFile(path.join(path.resolve(cwd), ".mcp.json"), (j) => grab(j.mcpServers || j));
+  tryFile(path.join(CLAUDE_HOME, "settings.json"), (j) => grab(j.mcpServers));
+  tryFile(path.join(os.homedir(), ".claude.json"), (j) => {
+    grab(j.mcpServers);
+    if (cwd && j.projects) grab((j.projects[path.resolve(cwd)] || {}).mcpServers);
+  });
+  if (agent === "opencode") { try { grab((await require("./opencode").getConfig()).mcp); } catch {} }
+  return [...names].map((n) => ({ category: "mcp", name: n, description: "", source: "mcp", invoke: "" }));
+}
+app.get("/skills", async (req, res) => {
   const a = cfg.agents[req.query.agent] || {};
-  const cwd = req.query.cwd;
+  const agent = req.query.agent, cwd = req.query.cwd;
   const out = [], seen = new Set();
-  // user-configured dirs
+  // skills: user-configured dirs
   for (const d of a.skillsDirs || []) scanSkillsDir(d, "user", seen, out);
   if (cfg.globalSkillsDir) scanSkillsDir(cfg.globalSkillsDir, "user", seen, out);
-  // installed Claude plugins
+  // skills + plugins: installed Claude plugins
   if (a.claudeSkills) {
     try {
       const idx = JSON.parse(fs.readFileSync(path.join(CLAUDE_HOME, "plugins", "installed_plugins.json"), "utf8"));
       for (const [key, installs] of Object.entries(idx.plugins || {})) {
         const pluginName = key.split("@")[0];
+        const version = (installs[0] || {}).version || "";
+        out.push({ category: "plugin", name: pluginName, description: version ? "v" + version : "", source: "installed", invoke: "" });
         for (const inst of installs) {
           if (inst.installPath) scanSkillsDir(path.join(inst.installPath, "skills"), "plugin:" + pluginName, seen, out);
         }
       }
     } catch {}
   }
-  // project skills under the session's cwd
+  // skills: project skills under the session's cwd
   if (cwd) scanSkillsDir(path.join(path.resolve(cwd), ".claude", "skills"), "project", seen, out);
+  // built-in skills (Claude binary-embedded; from editable config list)
+  if (a.claudeSkills) for (const n of cfg.builtinSkills || []) out.push({ category: "builtin", name: n, description: "built-in", source: "built-in", invoke: "/" + n });
+  // mcp servers (dynamic from config files + opencode)
+  try { out.push(...await collectMcps(agent, cwd)); } catch {}
   res.json(out);
 });
 

@@ -4,6 +4,7 @@
   "workspacesRoot": "C:/Users/tmcgu/Desktop/ai projects",
   "globalSkillsDir": "C:/Users/tmcgu/.claude/skills",
   "claudeHome": "C:/Users/tmcgu/.claude",
+  "builtinSkills": ["docx", "pdf", "pptx", "xlsx", "schedule", "skill-creator", "consolidate-memory", "setup-cowork"],
   "screenshotMs": 1000,
   "idleSeconds": 20,
   "ntfyTopic": "",

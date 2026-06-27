@@ -59,6 +59,7 @@
   .list div { padding: 10px; border-bottom: 1px solid #21262d; display: flex; gap: 8px; align-items: center; }
   .list div:active { background: #21262d; }
   .src { margin-left: auto; font-size: 11px; color: #8b949e; }
+  .list .seclabel { display: block; border: none; padding: 10px 6px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #6e7681; }
   .crumbs { font-size: 12px; color: #8b949e; margin: 4px 0; word-break: break-all; }
   /* opencode chat view (Claude-mobile style) */
   #chatTop { display: flex; gap: 8px; align-items: center; padding: 8px; background: #161b22; border-bottom: 1px solid #30363d; }
@@ -68,7 +69,12 @@
   .msg.user { align-self: flex-end; background: #1f6feb; color: #fff; border-bottom-right-radius: 5px; }
   .msg.assistant { align-self: flex-start; background: #161b22; border: 1px solid #30363d; border-bottom-left-radius: 5px; }
   .toolcard { align-self: flex-start; max-width: 88%; font-size: 12px; color: #adbac7; background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 7px 11px; }
-  .reason { align-self: flex-start; max-width: 88%; font-size: 12px; color: #6e7681; font-style: italic; }
+  .reason { align-self: flex-start; max-width: 88%; font-size: 12px; color: #6e7681; }
+  .reason summary { cursor: pointer; list-style: none; }
+  .reason summary::-webkit-details-marker { display: none; }
+  .reason summary::before { content: "▸ "; }
+  .reason[open] summary::before { content: "▾ "; }
+  .reason .reasontext { font-style: italic; white-space: pre-wrap; margin-top: 4px; }
   .thinking { align-self: flex-start; color: #8b949e; font-size: 13px; }
   .att { align-self: flex-end; max-width: 60%; border-radius: 12px; border: 1px solid #30363d; }
   #chatBar { display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
@@ -133,12 +139,13 @@
 
 <dialog id="dlgMenu" class="sheet">
   <div class="tabs"><b id="menuTitle"></b><span style="flex:1"></span><button id="menuClose">Close</button></div>
+  <input id="menuSearch" class="search" placeholder="Search…" style="display:none" />
   <div id="menuList" class="list"></div>
 </dialog>
 
 <dialog id="dlgAdd" class="sheet">
   <div class="tabs">
-    <button id="tabSkills" class="on">✦ Skills</button>
+    <button id="tabSkills" class="on">✦ Library</button>
     <button id="tabCtx">＠ Context</button>
     <span style="flex:1"></span>
     <button id="addClose">Done</button>
@@ -263,12 +270,20 @@ if (SR) {
 } else { qs("#micBtn").style.display = "none"; }
 
 // ---- per-agent option buttons (Model / Mode / Effort) ----
-function openMenu(title, items, onPick) {
+function openMenu(title, items, onPick, opts = {}) {
   qs("#menuTitle").textContent = title;
-  const l = qs("#menuList"); l.innerHTML = "";
-  if (!items.length) l.innerHTML = "<div class='pill'>None for this agent</div>";
-  items.forEach((it) => { const d = document.createElement("div"); d.textContent = it.label; d.onclick = () => { onPick(it); qs("#dlgMenu").close(); }; l.appendChild(d); });
+  const search = qs("#menuSearch");
+  const render = (q = "") => {
+    const l = qs("#menuList"); l.innerHTML = "";
+    const f = items.filter((it) => !q || it.label.toLowerCase().includes(q.toLowerCase()));
+    if (!f.length) l.innerHTML = "<div class='pill'>None</div>";
+    f.forEach((it) => { const d = document.createElement("div"); d.textContent = it.label; d.onclick = () => { onPick(it); qs("#dlgMenu").close(); }; l.appendChild(d); });
+  };
+  if (opts.search) { search.style.display = ""; search.value = ""; search.oninput = () => render(search.value); }
+  else search.style.display = "none";
+  render();
   qs("#dlgMenu").showModal();
+  if (opts.search) setTimeout(() => search.focus(), 50);
 }
 qs("#menuClose").onclick = () => qs("#dlgMenu").close();
 
@@ -328,7 +343,10 @@ function renderMessages(list) {
       if (p.type === "text" && p.text && p.text.trim()) {
         const d = document.createElement("div"); d.className = "msg " + role; d.textContent = p.text; c.appendChild(d);
       } else if (p.type === "reasoning" && p.text && p.text.trim()) {
-        const d = document.createElement("div"); d.className = "reason"; d.textContent = "💭 " + p.text.trim(); c.appendChild(d);
+        const d = document.createElement("details"); d.className = "reason";
+        const sm = document.createElement("summary"); sm.textContent = "💭 thinking";
+        const tx = document.createElement("div"); tx.className = "reasontext"; tx.textContent = p.text.trim();
+        d.append(sm, tx); c.appendChild(d);
       } else if (p.type === "tool") {
         const st = p.state || {}; const label = st.title || p.tool || "tool";
         const d = document.createElement("div"); d.className = "toolcard";
@@ -377,7 +395,7 @@ qs("#chatSend").onclick = sendChat;
 qs("#chatCli").onclick = () => { if (activeSession) openTerminal(activeSession); };
 qs("#chatModelBtn").onclick = async () => {
   const ms = await api("/oc/models").catch(() => []);
-  openMenu("Model", ms.map((m) => ({ label: m })), (it) => { chatModel = it.label; localStorage.setItem("ocModel", chatModel); updateModelBtn(); });
+  openMenu("Model", ms.map((m) => ({ label: m })), (it) => { chatModel = it.label; localStorage.setItem("ocModel", chatModel); updateModelBtn(); }, { search: true });
 };
 // attachments: file picker + paste image
 const fileToAtt = (f) => new Promise((res) => { const r = new FileReader(); r.onload = () => res({ filename: f.name || "pasted", mime: f.type || "application/octet-stream", dataUrl: r.result }); r.readAsDataURL(f); });
@@ -419,16 +437,22 @@ async function loadSkills() {
   allSkills = await api("/skills?agent=" + activeSession.agent + "&cwd=" + encodeURIComponent(activeSession.cwd)).catch(() => []);
   renderSkills();
 }
+const catIcon = { skill: "✦", builtin: "🧩", plugin: "🔌", mcp: "🛰" };
 function renderSkills() {
   const q = qs("#skSearch").value.toLowerCase();
   const l = qs("#skList"); l.innerHTML = "";
   const items = allSkills.filter((s) => (s.name + " " + (s.description || "")).toLowerCase().includes(q));
-  if (!items.length) { l.innerHTML = "<div class='pill'>No skills found</div>"; return; }
-  items.forEach((s) => {
-    const d = document.createElement("div");
-    d.innerHTML = `<div style="flex:1;min-width:0"><div>✦ ${s.name}</div>${s.description ? `<small class="pill">${s.description}</small>` : ""}</div><span class="src">${s.source}</span>`;
-    d.onclick = () => { insertText(s.invoke || ("/" + s.name)); qs("#dlgAdd").close(); };
-    l.appendChild(d);
+  if (!items.length) { l.innerHTML = "<div class='pill'>Nothing found</div>"; return; }
+  [["skill", "Skills"], ["builtin", "Built-in"], ["plugin", "Plugins"], ["mcp", "MCPs"]].forEach(([cat, label]) => {
+    const group = items.filter((s) => (s.category || "skill") === cat);
+    if (!group.length) return;
+    const h = document.createElement("div"); h.className = "seclabel"; h.textContent = label + " (" + group.length + ")"; l.appendChild(h);
+    group.forEach((s) => {
+      const d = document.createElement("div");
+      d.innerHTML = `<div style="flex:1;min-width:0"><div>${catIcon[cat] || "•"} ${s.name}</div>${s.description ? `<small class="pill">${s.description}</small>` : ""}</div><span class="src">${s.source}</span>`;
+      d.onclick = () => { insertText(s.invoke || s.name); qs("#dlgAdd").close(); };
+      l.appendChild(d);
+    });
   });
 }
 qs("#skSearch").oninput = renderSkills;
