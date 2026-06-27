@@ -416,7 +416,14 @@ chatInput.addEventListener("input", (e) => {
   if (e.data === "/") { stripLastChar("/"); libMenu(["skill", "builtin"], "Skills"); }
   else if (e.data === "@") { stripLastChar("@"); if (activeSession) openAdd("ctx"); }
 });
-qs("#chatCli").onclick = () => { if (activeSession) openTerminal(activeSession); };
+qs("#chatCli").onclick = async () => {
+  if (!activeSession) return;
+  const s = activeSession;
+  showView("vSession");
+  qs("#term") && term && term.reset();
+  try { await api("/sessions/" + s.id + "/restart", { method: "POST" }); } catch {}
+  openTerminal(s); // reconnect → pty respawns fresh → opencode reloads the conversation
+};
 qs("#chatModelBtn").onclick = async () => {
   const ms = await api("/oc/models").catch(() => []);
   openMenu("Model", ms.map((m) => ({ label: m })), (it) => { chatModel = it.label; localStorage.setItem("ocModel", chatModel); updateModelBtn(); }, { search: true });

@@ -83,6 +83,7 @@ function startPty(s, extraArgs = []) {
   s.pty = p;
   s.busy = false;
   p.onData((d) => {
+    if (s.pty !== p) return; // superseded by a fresh restart
     s.buf = (s.buf + d).slice(-BUF_CAP);
     broadcast(s, { t: "o", d });
     // idle detection: quiet-after-busy -> one ntfy
@@ -93,6 +94,7 @@ function startPty(s, extraArgs = []) {
     }, (cfg.idleSeconds || 20) * 1000);
   });
   p.onExit(() => {
+    if (s.pty !== p) return; // superseded by a fresh restart — don't touch the new pty
     clearTimeout(s.idleTimer);
     s.pty = null;
     broadcast(s, { t: "exit" });
@@ -168,6 +170,25 @@ app.post("/sessions", (req, res) => {
 });
 app.delete("/sessions/:id", (req, res) => {
   res.json({ ok: deleteSession(req.params.id) });
+});
+// restart a session's pty: kill it and WAIT for full exit, then clear buffer.
+// The next WS attach respawns it fresh (in a later turn) — so opencode reloads the
+// conversation. Two-phase (kill here, spawn on reconnect) avoids the ConPTY/libuv
+// kill+respawn-same-tick crash on Windows.
+app.post("/sessions/:id/restart", async (req, res) => {
+  const s = sessions.get(req.params.id);
+  if (!s) return res.status(404).json({ error: "no session" });
+  if (s.pty) {
+    const old = s.pty; s.pty = null; s.buf = "";
+    await new Promise((r) => {
+      let done = false; const fin = () => { if (!done) { done = true; r(); } };
+      try { old.onExit(fin); } catch { fin(); }
+      try { old.kill(); } catch { fin(); }
+      setTimeout(fin, 2000);
+    });
+    await new Promise((r) => setTimeout(r, 200)); // let ConPTY release
+  }
+  res.json({ ok: true });
 });
 
 // agent capability descriptors (without command internals) for the UI
