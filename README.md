@@ -21,6 +21,9 @@ RustDesk. What it adds is the missing layer.
 - **See-only screen** — a low-fps screenshot view to watch what's happening; a button links out
   to RustDesk for true GUI control.
 - **Idle push** — when an agent goes quiet waiting for you, it pings your phone via ntfy.
+- **opencode chat GUI** — opencode sessions open a Claude-mobile-style chat (bubbles +
+  tool-call cards + model picker + paste/attach), driven by opencode's HTTP API
+  (`opencode serve`, proxied via `/oc/*`). A **CLI** toggle drops back to the raw terminal.
 - **PWA** — open a URL, "Add to Home Screen". No app store.
 
 ## Quick start

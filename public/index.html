@@ -30,10 +30,10 @@
   #inputbar .box { flex: 1; display: flex; align-items: flex-end; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 2px 4px 2px 8px; }
   #msgInput { flex: 1; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 9px 4px; resize: none; max-height: 30vh; }
   #msgInput:focus { outline: none; }
-  #inputbar .icon { background: transparent; border: none; color: #8b949e; font-size: 17px; padding: 7px; border-radius: 50%; line-height: 1; }
+  #inputbar .icon, #chatBar .icon { background: transparent; border: none; color: #8b949e; font-size: 17px; padding: 7px; border-radius: 50%; line-height: 1; }
   #inputbar .icon.rec { color: #fb6a3c; }
-  #send { background: #fb6a3c; border: none; color: #fff; width: 40px; height: 40px; border-radius: 50%; font-size: 17px; flex: none; }
-  #send:disabled { background: #30363d; color: #8b949e; }
+  #send, #chatSend { background: #fb6a3c; border: none; color: #fff; width: 40px; height: 40px; border-radius: 50%; font-size: 17px; flex: none; }
+  #send:disabled, #chatSend:disabled { background: #30363d; color: #8b949e; }
   .grp { display: flex; align-items: center; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 2px 4px; }
   .grp label { color: #8b949e; font-size: 11px; }
   #screen img { width: 100%; height: 100%; object-fit: contain; }
@@ -60,6 +60,23 @@
   .list div:active { background: #21262d; }
   .src { margin-left: auto; font-size: 11px; color: #8b949e; }
   .crumbs { font-size: 12px; color: #8b949e; margin: 4px 0; word-break: break-all; }
+  /* opencode chat view (Claude-mobile style) */
+  #chatTop { display: flex; gap: 8px; align-items: center; padding: 8px; background: #161b22; border-bottom: 1px solid #30363d; }
+  #chatTop button { background: #21262d; border: 1px solid #30363d; border-radius: 16px; padding: 6px 12px; font-size: 13px; color: #c9d1d9; white-space: nowrap; }
+  #chatMsgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 85%; padding: 10px 13px; border-radius: 16px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+  .msg.user { align-self: flex-end; background: #1f6feb; color: #fff; border-bottom-right-radius: 5px; }
+  .msg.assistant { align-self: flex-start; background: #161b22; border: 1px solid #30363d; border-bottom-left-radius: 5px; }
+  .toolcard { align-self: flex-start; max-width: 88%; font-size: 12px; color: #adbac7; background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 7px 11px; }
+  .reason { align-self: flex-start; max-width: 88%; font-size: 12px; color: #6e7681; font-style: italic; }
+  .thinking { align-self: flex-start; color: #8b949e; font-size: 13px; }
+  .att { align-self: flex-end; max-width: 60%; border-radius: 12px; border: 1px solid #30363d; }
+  #chatBar { display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
+  #chatBar .box { flex: 1; display: flex; align-items: flex-end; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 2px 4px 2px 8px; }
+  #chatInput { flex: 1; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 9px 4px; resize: none; max-height: 30vh; }
+  #chatInput:focus { outline: none; }
+  #chatAtts { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 10px; }
+  #chatAtts .chip { display: flex; align-items: center; gap: 4px; background: #21262d; border: 1px solid #30363d; border-radius: 12px; padding: 3px 8px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -85,7 +102,24 @@
     </div>
   </div>
   <div class="view" id="screen"><img id="shot" alt="screen" /></div>
+  <div class="view" id="vChat">
+    <div id="chatTop">
+      <button id="chatModelBtn">Model ▾</button>
+      <span style="flex:1"></span>
+      <button id="chatCli" title="Switch to terminal">⌨ CLI</button>
+    </div>
+    <div id="chatMsgs"></div>
+    <div id="chatAtts"></div>
+    <div id="chatBar">
+      <button class="icon" id="chatAddBtn" title="Attach file/image">＋</button>
+      <div class="box">
+        <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
+      </div>
+      <button id="chatSend" title="Send">➤</button>
+    </div>
+  </div>
 </div>
+<input type="file" id="chatFile" accept="*/*" style="display:none" multiple />
 
 <dialog id="dlgNew">
   <h3>New session</h3>
@@ -173,8 +207,13 @@ async function refresh() {
   });
 }
 
-// ---- terminal session ----
+// opencode sessions default to the chat GUI; everything else to the terminal
 function openSession(s) {
+  if (s.agent === "opencode") openChat(s); else openTerminal(s);
+}
+
+// ---- terminal session ----
+function openTerminal(s) {
   active = s.id;
   activeSession = s;
   showView("vSession");
@@ -236,6 +275,10 @@ qs("#menuClose").onclick = () => qs("#dlgMenu").close();
 function buildOptbar(s) {
   const bar = qs("#optbar"); bar.innerHTML = "";
   const d = agents[s.agent] || {};
+  if (s.agent === "opencode") {
+    const cb = document.createElement("button"); cb.className = "optbtn"; cb.textContent = "💬 Chat";
+    cb.onclick = () => openChat(s); bar.appendChild(cb);
+  }
   const apply = (body) => api("/apply", { method: "POST", body: JSON.stringify({ session: s.id, ...body }) });
   const pick = (o) => { if (o.slash || o.text) apply({ send: o.slash || o.text }); else if (o.flag) apply({ respawnArgs: o.flag.split(" ").filter(Boolean) }); };
   const btn = (label, opts) => {
@@ -245,6 +288,108 @@ function buildOptbar(s) {
   };
   btn("Model", d.models); btn("Mode", d.modes); btn("Effort", d.efforts);
 }
+
+// ---- opencode chat GUI ----
+let ocSid = null;
+let chatModel = localStorage.getItem("ocModel") || "";
+let pendingAtts = []; // {filename, mime, dataUrl}
+
+async function ensureOcSession(s) {
+  const key = "ocsid:" + s.id;
+  let sid = localStorage.getItem(key);
+  if (sid) return sid;
+  const r = await api("/oc/session", { method: "POST", body: JSON.stringify({ cwd: s.cwd, title: s.name }) });
+  localStorage.setItem(key, r.id); return r.id;
+}
+async function openChat(s) {
+  active = s.id; activeSession = s;
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  showView("vChat");
+  qs("#chatMsgs").innerHTML = "<div class='thinking'>Loading…</div>";
+  pendingAtts = []; renderAtts();
+  try {
+    ocSid = await ensureOcSession(s);
+    if (!chatModel) { const ms = await api("/oc/models").catch(() => []); chatModel = ms.find((m) => /free/i.test(m)) || ms[0] || ""; localStorage.setItem("ocModel", chatModel); }
+    updateModelBtn();
+    await loadChat();
+  } catch (e) { qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
+  refresh();
+}
+function updateModelBtn() { qs("#chatModelBtn").textContent = (chatModel ? chatModel.split("/").pop() : "Model") + " ▾"; }
+async function loadChat() {
+  const list = await api("/oc/messages?sid=" + ocSid);
+  renderMessages(list);
+}
+function renderMessages(list) {
+  const c = qs("#chatMsgs"); c.innerHTML = "";
+  list.forEach((m) => {
+    const role = m.info && m.info.role === "user" ? "user" : "assistant";
+    (m.parts || []).forEach((p) => {
+      if (p.type === "text" && p.text && p.text.trim()) {
+        const d = document.createElement("div"); d.className = "msg " + role; d.textContent = p.text; c.appendChild(d);
+      } else if (p.type === "reasoning" && p.text && p.text.trim()) {
+        const d = document.createElement("div"); d.className = "reason"; d.textContent = "💭 " + p.text.trim(); c.appendChild(d);
+      } else if (p.type === "tool") {
+        const st = p.state || {}; const label = st.title || p.tool || "tool";
+        const d = document.createElement("div"); d.className = "toolcard";
+        d.textContent = (st.status === "error" ? "⚠️ " : "🔧 ") + label; c.appendChild(d);
+      } else if (p.type === "file" && p.mime && p.mime.startsWith("image/") && p.url) {
+        const img = document.createElement("img"); img.className = "att"; img.src = "/oc/file?url=" + encodeURIComponent(p.url) + "&token=" + encodeURIComponent(TOKEN); c.appendChild(img);
+      }
+    });
+  });
+  c.scrollTop = c.scrollHeight;
+}
+function renderAtts() {
+  const a = qs("#chatAtts"); a.innerHTML = "";
+  pendingAtts.forEach((att, i) => {
+    const chip = document.createElement("div"); chip.className = "chip";
+    chip.innerHTML = `<span>📎 ${att.filename}</span>`;
+    const x = document.createElement("button"); x.textContent = "✕"; x.style.cssText = "background:none;border:none;color:#8b949e;padding:0";
+    x.onclick = () => { pendingAtts.splice(i, 1); renderAtts(); };
+    chip.appendChild(x); a.appendChild(chip);
+  });
+}
+const chatInput = qs("#chatInput");
+function growChat() { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, window.innerHeight * 0.3) + "px"; }
+chatInput.addEventListener("input", growChat);
+chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+async function sendChat() {
+  const t = chatInput.value.trim();
+  if (!t && !pendingAtts.length) return;
+  const parts = [];
+  pendingAtts.forEach((a) => parts.push({ type: "file", mime: a.mime, filename: a.filename, url: a.dataUrl }));
+  if (t) parts.push({ type: "text", text: t });
+  // optimistic user bubble + thinking indicator
+  const c = qs("#chatMsgs");
+  pendingAtts.filter((a) => a.mime.startsWith("image/")).forEach((a) => { const im = document.createElement("img"); im.className = "att"; im.src = a.dataUrl; c.appendChild(im); });
+  if (t) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = t; c.appendChild(d); }
+  const think = document.createElement("div"); think.className = "thinking"; think.textContent = "opencode is working…"; c.appendChild(think); c.scrollTop = c.scrollHeight;
+  chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
+  qs("#chatSend").disabled = true;
+  try {
+    await api("/oc/send", { method: "POST", body: JSON.stringify({ sid: ocSid, model: chatModel, parts }) });
+    await loadChat();
+  } catch (e) { think.textContent = "⚠️ " + e.message; }
+  qs("#chatSend").disabled = false;
+}
+qs("#chatSend").onclick = sendChat;
+qs("#chatCli").onclick = () => { if (activeSession) openTerminal(activeSession); };
+qs("#chatModelBtn").onclick = async () => {
+  const ms = await api("/oc/models").catch(() => []);
+  openMenu("Model", ms.map((m) => ({ label: m })), (it) => { chatModel = it.label; localStorage.setItem("ocModel", chatModel); updateModelBtn(); });
+};
+// attachments: file picker + paste image
+const fileToAtt = (f) => new Promise((res) => { const r = new FileReader(); r.onload = () => res({ filename: f.name || "pasted", mime: f.type || "application/octet-stream", dataUrl: r.result }); r.readAsDataURL(f); });
+qs("#chatAddBtn").onclick = () => qs("#chatFile").click();
+qs("#chatFile").onchange = async (e) => { for (const f of e.target.files) pendingAtts.push(await fileToAtt(f)); renderAtts(); e.target.value = ""; };
+chatInput.addEventListener("paste", async (e) => {
+  const items = [...(e.clipboardData?.items || [])].filter((it) => it.kind === "file");
+  if (!items.length) return;
+  e.preventDefault();
+  for (const it of items) { const f = it.getAsFile(); if (f) pendingAtts.push(await fileToAtt(f)); }
+  renderAtts();
+});
 
 // ---- skills + context menu (the "+" sheet) ----
 function insertText(t) {

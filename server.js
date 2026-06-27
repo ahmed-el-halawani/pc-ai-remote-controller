@@ -278,6 +278,33 @@ app.get("/screen.jpg", async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---- opencode chat (GUI wrapper over the opencode HTTP API) ---------------
+const opencode = require("./opencode");
+app.get("/oc/models", async (_req, res) => {
+  try { res.json(await opencode.listModels()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/oc/session", async (req, res) => {
+  try { res.json(await opencode.createSession(path.resolve(req.body.cwd || cfg.workspacesRoot), req.body.title)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/oc/messages", async (req, res) => {
+  try { res.json(await opencode.getMessages(req.query.sid)); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/oc/send", async (req, res) => {
+  try { res.json(await opencode.sendMessage(req.body.sid, req.body.model, req.body.parts)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+// proxy opencode-stored file parts (images/attachments) so the phone can load them
+app.get("/oc/file", async (req, res) => {
+  try {
+    await opencode.start();
+    const r = await fetch(opencode.BASE + req.query.url);
+    if (!r.ok) return res.status(404).end();
+    res.set("Content-Type", r.headers.get("content-type") || "application/octet-stream");
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // rustdesk launch info for the UI button
 app.get("/rustdesk", (_req, res) => res.json({ id: cfg.rustdeskId || "" }));
 
