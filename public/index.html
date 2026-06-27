@@ -26,7 +26,7 @@
   #optbar:empty { display: none; }
   .optbtn { background: #21262d; border: 1px solid #30363d; border-radius: 16px; padding: 6px 12px; font-size: 13px; color: #c9d1d9; white-space: nowrap; flex: none; }
   /* Claude-mobile-style composer */
-  #inputbar { display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
+  #inputbar { position: relative; display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
   #inputbar .box { flex: 1; display: flex; align-items: flex-end; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 2px 4px 2px 8px; }
   #msgInput { flex: 1; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 9px 4px; resize: none; max-height: 30vh; }
   #msgInput:focus { outline: none; }
@@ -78,12 +78,12 @@
   .thinking { align-self: flex-start; color: #8b949e; font-size: 13px; }
   .att { align-self: flex-end; max-width: 60%; border-radius: 12px; border: 1px solid #30363d; }
   #chatBar { position: relative; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
-  #acPop { position: absolute; left: 8px; right: 8px; bottom: calc(100% - 1px); max-height: 44vh; overflow-y: auto; background: #161b22; border: 1px solid #30363d; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 24px rgba(0,0,0,.45); display: none; z-index: 50; }
-  #acPop.show { display: block; }
-  #acPop .achdr { padding: 8px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #6e7681; position: sticky; top: 0; background: #161b22; }
-  #acPop .acitem { padding: 10px 12px; border-top: 1px solid #21262d; font-size: 14px; display: flex; gap: 6px; align-items: center; }
-  #acPop .acitem.sel, #acPop .acitem:active { background: #1f6feb22; }
-  #acPop .acd { color: #6e7681; font-size: 12px; }
+  .acpop { position: absolute; left: 8px; right: 8px; bottom: calc(100% - 1px); max-height: 44vh; overflow-y: auto; background: #161b22; border: 1px solid #30363d; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 24px rgba(0,0,0,.45); display: none; z-index: 50; }
+  .acpop.show { display: block; }
+  .acpop .achdr { padding: 8px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #6e7681; position: sticky; top: 0; background: #161b22; }
+  .acpop .acitem { padding: 10px 12px; border-top: 1px solid #21262d; font-size: 14px; display: flex; gap: 6px; align-items: center; }
+  .acpop .acitem.sel, .acpop .acitem:active { background: #1f6feb22; }
+  .acpop .acd { color: #6e7681; font-size: 12px; }
   .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
   .composer-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
   #chatInput { width: 100%; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 4px 2px; resize: none; max-height: 30vh; }
@@ -108,6 +108,7 @@
     <div id="term"></div>
     <div id="optbar"></div>
     <div id="inputbar">
+      <div id="acPopT" class="acpop"></div>
       <div class="box">
         <button class="icon" id="addBtn" title="Skills &amp; context">＋</button>
         <textarea id="msgInput" rows="1" placeholder="Message…"></textarea>
@@ -126,7 +127,7 @@
     <div id="chatMsgs"></div>
     <div id="chatAtts"></div>
     <div id="chatBar">
-      <div id="acPop"></div>
+      <div id="acPop" class="acpop"></div>
       <div class="composer">
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
         <div class="composer-actions">
@@ -252,6 +253,7 @@ function openTerminal(s) {
   ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.t === "o") term.write(m.d); else if (m.t === "exit") term.write("\r\n[process exited]\r\n"); };
   ws.onopen = () => doFit();
   buildOptbar(s);
+  hideAC(); acCtxDir = null; allSkills = []; loadSkills().catch(() => {}); // autocomplete in the CLI composer too
   refresh();
   setTimeout(doFit, 50);
 }
@@ -270,8 +272,8 @@ function sendMsg() {
   ws.send(JSON.stringify({ t: "i", d: v + "\r" }));
   msgInput.value = ""; growInput(); msgInput.focus();
 }
-msgInput.addEventListener("input", growInput);
-msgInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+msgInput.addEventListener("input", () => { growInput(); updateAC(); });
+msgInput.addEventListener("keydown", (e) => { if (acKeydown(e)) return; if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
 qs("#send").onclick = sendMsg;
 
 // voice dictation via the browser's native SpeechRecognition (no dependency)
@@ -387,13 +389,7 @@ const chatInput = qs("#chatInput");
 function growChat() { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, window.innerHeight * 0.3) + "px"; }
 chatInput.addEventListener("input", () => { growChat(); updateAC(); });
 chatInput.addEventListener("keydown", (e) => {
-  const ac = qs("#acPop");
-  if (ac.classList.contains("show")) {
-    if (e.key === "ArrowDown") { e.preventDefault(); return acMove(1); }
-    if (e.key === "ArrowUp") { e.preventDefault(); return acMove(-1); }
-    if (e.key === "Enter") { e.preventDefault(); if (acItems[acSel]) acItems[acSel].pick(); return; }
-    if (e.key === "Escape") { e.preventDefault(); return hideAC(); }
-  }
+  if (acKeydown(e)) return;
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
 async function sendChat() {
@@ -419,54 +415,61 @@ qs("#chatSend").onclick = sendChat;
 qs("#toolLibrary").onclick = () => { if (activeSession) openAdd("skills"); }; // full sectioned sheet
 qs("#toolContext").onclick = () => { if (activeSession) openAdd("ctx"); };
 
-// ---- inline autocomplete (/ skills, @ files) above the input ----
-const acPop = qs("#acPop");
+// ---- inline autocomplete (/ skills, @ files) above the active composer (chat OR cli) ----
+const qsa = (s) => [...document.querySelectorAll(s)];
 let acItems = [], acSel = 0, acCtxDir = null, acCtxEntries = [];
-function hideAC() { acPop.classList.remove("show"); acPop.innerHTML = ""; acItems = []; }
-function getTrigger() {
-  const v = chatInput.value, pos = chatInput.selectionStart, before = v.slice(0, pos);
+function acCtx() {
+  const onChat = qs("#vChat").classList.contains("show");
+  return { input: onChat ? qs("#chatInput") : qs("#msgInput"), pop: onChat ? qs("#acPop") : qs("#acPopT") };
+}
+function hideAC() { qsa(".acpop").forEach((p) => { p.classList.remove("show"); p.innerHTML = ""; }); acItems = []; }
+function getTrigger(input) {
+  const v = input.value, pos = input.selectionStart, before = v.slice(0, pos);
   let m = before.match(/(^|\s)\/([^\s\/@]*)$/);          // /skill  (no slashes in the query)
   if (m) return { char: "/", query: m[2], start: pos - m[2].length - 1 };
   m = before.match(/(^|\s)@([^\s@]*)$/);                  // @path/to  (slashes allowed)
   if (m) return { char: "@", query: m[2], start: pos - m[2].length - 1 };
   return null;
 }
-function replaceToken(t, text) {
-  const v = chatInput.value, pos = chatInput.selectionStart;
-  chatInput.value = v.slice(0, t.start) + text + v.slice(pos);
-  const np = t.start + text.length; chatInput.setSelectionRange(np, np);
-  chatInput.focus(); growChat(); updateAC(); // re-evaluate (dir nav keeps the popup open)
+function replaceToken(input, t, text) {
+  const v = input.value, pos = input.selectionStart;
+  input.value = v.slice(0, t.start) + text + v.slice(pos);
+  const np = t.start + text.length; input.setSelectionRange(np, np);
+  input.focus(); input.dispatchEvent(new Event("input")); // grows + re-evaluates (dir nav keeps it open)
 }
 function acMove(d) {
+  const { pop } = acCtx();
   acSel = (acSel + d + acItems.length) % acItems.length;
-  [...acPop.querySelectorAll(".acitem")].forEach((el, i) => el.classList.toggle("sel", i === acSel));
-  const sel = acPop.querySelector(".acitem.sel"); if (sel) sel.scrollIntoView({ block: "nearest" });
+  [...pop.querySelectorAll(".acitem")].forEach((el, i) => el.classList.toggle("sel", i === acSel));
+  const sel = pop.querySelector(".acitem.sel"); if (sel) sel.scrollIntoView({ block: "nearest" });
 }
-function renderAC(items) {
-  if (!items.length) { hideAC(); return; }        // no match → disappear
-  acItems = items; acSel = 0; acPop.innerHTML = "";
+function renderAC(pop, items) {
+  if (!items.length) { pop.classList.remove("show"); pop.innerHTML = ""; acItems = []; return; } // no match → disappear
+  acItems = items; acSel = 0; pop.innerHTML = "";
   let lastSec = null;
   items.forEach((it, i) => {
-    if (it.section && it.section !== lastSec) { lastSec = it.section; const h = document.createElement("div"); h.className = "achdr"; h.textContent = it.section; acPop.appendChild(h); }
+    if (it.section && it.section !== lastSec) { lastSec = it.section; const h = document.createElement("div"); h.className = "achdr"; h.textContent = it.section; pop.appendChild(h); }
     const d = document.createElement("div"); d.className = "acitem" + (i === acSel ? " sel" : ""); d.innerHTML = it.html;
     d.onmousedown = (e) => { e.preventDefault(); it.pick(); }; // mousedown keeps the textarea focused
-    acPop.appendChild(d);
+    pop.appendChild(d);
   });
-  acPop.classList.add("show");
+  pop.classList.add("show");
 }
 async function updateAC() {
-  if (!qs("#vChat").classList.contains("show")) return hideAC();
-  const t = getTrigger();
-  if (!t) return hideAC();                          // trigger deleted → disappear
+  if (!activeSession) return hideAC();
+  const { input, pop } = acCtx();
+  qsa(".acpop").forEach((p) => { if (p !== pop) { p.classList.remove("show"); p.innerHTML = ""; } });
+  const t = getTrigger(input);
+  if (!t) { pop.classList.remove("show"); pop.innerHTML = ""; acItems = []; return; } // trigger deleted → disappear
   if (t.char === "/") {
     const q = t.query.toLowerCase();
     const items = allSkills.filter((s) => ["skill", "builtin"].includes(s.category || "skill") && s.name.toLowerCase().includes(q))
       .slice(0, 40).map((s) => ({
         section: s.category === "builtin" ? "Built-in" : "Skills",
         html: `<span>✦ ${s.name}</span>${s.description ? `<span class="acd">${s.description.slice(0, 38)}</span>` : ""}`,
-        pick: () => replaceToken(t, (s.invoke || ("/" + s.name)) + " "),
+        pick: () => replaceToken(input, t, (s.invoke || ("/" + s.name)) + " "),
       }));
-    renderAC(items);
+    renderAC(pop, items);
   } else {
     const q = t.query, slash = q.lastIndexOf("/");
     const dirPart = slash >= 0 ? q.slice(0, slash) : "", base = (slash >= 0 ? q.slice(slash + 1) : q).toLowerCase();
@@ -477,14 +480,23 @@ async function updateAC() {
     }
     const items = acCtxEntries.filter((e) => e.name.toLowerCase().includes(base)).slice(0, 50).map((e) => {
       const rel = (dirPart ? dirPart + "/" : "") + e.name;
-      return { section: "Context", html: (e.dir ? "📁 " : "📄 ") + e.name, pick: () => replaceToken(t, e.dir ? "@" + rel + "/" : "@" + rel + " ") };
+      return { section: "Context", html: (e.dir ? "📁 " : "📄 ") + e.name, pick: () => replaceToken(input, t, e.dir ? "@" + rel + "/" : "@" + rel + " ") };
     });
-    renderAC(items);
+    renderAC(pop, items);
   }
+}
+function acKeydown(e) {
+  const { pop } = acCtx();
+  if (!pop.classList.contains("show")) return false;
+  if (e.key === "ArrowDown") { e.preventDefault(); acMove(1); return true; }
+  if (e.key === "ArrowUp") { e.preventDefault(); acMove(-1); return true; }
+  if (e.key === "Enter") { e.preventDefault(); if (acItems[acSel]) acItems[acSel].pick(); return true; }
+  if (e.key === "Escape") { e.preventDefault(); hideAC(); return true; }
+  return false;
 }
 // click outside → disappear (item taps use mousedown, so they don't trigger this)
 document.addEventListener("click", (e) => {
-  if (acPop.classList.contains("show") && !acPop.contains(e.target) && e.target !== chatInput) hideAC();
+  if (qsa(".acpop.show").length && !e.target.closest(".acpop") && !e.target.closest("textarea")) hideAC();
 });
 qs("#chatCli").onclick = async () => {
   if (!activeSession) return;
