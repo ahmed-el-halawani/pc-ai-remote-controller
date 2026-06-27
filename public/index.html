@@ -77,12 +77,12 @@
   .reason .reasontext { font-style: italic; white-space: pre-wrap; margin-top: 4px; }
   .thinking { align-self: flex-start; color: #8b949e; font-size: 13px; }
   .att { align-self: flex-end; max-width: 60%; border-radius: 12px; border: 1px solid #30363d; }
-  #chatBar { display: flex; align-items: flex-end; gap: 8px; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
-  #chatBar .box { flex: 1; display: flex; align-items: flex-end; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 2px 4px 2px 8px; }
-  #chatInput { flex: 1; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 9px 4px; resize: none; max-height: 30vh; }
+  #chatBar { padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
+  .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .composer-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
+  #chatInput { width: 100%; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 4px 2px; resize: none; max-height: 30vh; }
   #chatInput:focus { outline: none; }
-  #chatTools { display: flex; gap: 8px; padding: 6px 8px 0; overflow-x: auto; }
-  .tool { display: inline-flex; align-items: center; gap: 7px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; padding: 8px 14px; font-size: 13px; color: #c9d1d9; white-space: nowrap; flex: none; }
+  .tool { display: inline-flex; align-items: center; gap: 7px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; padding: 7px 12px; font-size: 13px; color: #c9d1d9; white-space: nowrap; flex: none; }
   .tool .ico { font-size: 15px; line-height: 1; opacity: .85; }
   #chatAtts { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 10px; }
   #chatAtts .chip { display: flex; align-items: center; gap: 4px; background: #21262d; border: 1px solid #30363d; border-radius: 12px; padding: 3px 8px; font-size: 12px; }
@@ -119,16 +119,17 @@
     </div>
     <div id="chatMsgs"></div>
     <div id="chatAtts"></div>
-    <div id="chatTools">
-      <button class="tool" id="toolLibrary"><span class="ico">☰</span> Library</button>
-      <button class="tool" id="toolContext"><span class="ico">☰</span> Context</button>
-    </div>
     <div id="chatBar">
-      <button class="icon" id="chatAddBtn" title="Attach file/image">＋</button>
-      <div class="box">
+      <div class="composer">
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
+        <div class="composer-actions">
+          <button class="tool" id="toolLibrary"><span class="ico">☰</span> Library</button>
+          <button class="tool" id="toolContext"><span class="ico">☰</span> Context</button>
+          <button class="icon" id="chatAddBtn" title="Attach file/image">＋</button>
+          <span style="flex:1"></span>
+          <button id="chatSend" title="Send">➤</button>
+        </div>
       </div>
-      <button id="chatSend" title="Send">➤</button>
     </div>
   </div>
 </div>
