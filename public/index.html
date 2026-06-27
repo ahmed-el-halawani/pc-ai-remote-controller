@@ -117,6 +117,7 @@
     <div id="chatMsgs"></div>
     <div id="chatAtts"></div>
     <div id="chatBar">
+      <button class="icon" id="chatLib" title="Skills / plugins / MCPs">✦</button>
       <button class="icon" id="chatAddBtn" title="Attach file/image">＋</button>
       <div class="box">
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
@@ -392,6 +393,7 @@ async function sendChat() {
   qs("#chatSend").disabled = false;
 }
 qs("#chatSend").onclick = sendChat;
+qs("#chatLib").onclick = () => { if (activeSession) openAdd("skills"); };
 qs("#chatCli").onclick = () => { if (activeSession) openTerminal(activeSession); };
 qs("#chatModelBtn").onclick = async () => {
   const ms = await api("/oc/models").catch(() => []);
@@ -411,9 +413,9 @@ chatInput.addEventListener("paste", async (e) => {
 
 // ---- skills + context menu (the "+" sheet) ----
 function insertText(t) {
-  const m = qs("#msgInput");
+  const m = qs("#vChat").classList.contains("show") ? qs("#chatInput") : qs("#msgInput");
   m.value += (m.value && !m.value.endsWith(" ") ? " " : "") + t + " ";
-  growInput(); m.focus();
+  m.dispatchEvent(new Event("input")); m.focus(); // triggers the right grow handler
 }
 const relTo = (base, full) => full.replace(base, "").replace(/^[\\/]/, "") || ".";
 

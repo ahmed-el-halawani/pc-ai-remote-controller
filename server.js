@@ -283,7 +283,21 @@ app.get("/skills", async (req, res) => {
   if (a.claudeSkills) for (const n of cfg.builtinSkills || []) out.push({ category: "builtin", name: n, description: "built-in", source: "built-in", invoke: "/" + n });
   // mcp servers (dynamic from config files + opencode)
   try { out.push(...await collectMcps(agent, cwd)); } catch {}
-  res.json(out);
+  // opencode plugins (dynamic from its /config)
+  if (agent === "opencode") {
+    try {
+      const oc = await require("./opencode").getConfig();
+      const plugins = Array.isArray(oc.plugin) ? oc.plugin : Object.keys(oc.plugin || {});
+      for (const p of plugins) {
+        const name = String(p).replace(/@.*$/, "").split(/[\\/]/).pop().replace(/\.js$/, "");
+        out.push({ category: "plugin", name, description: "", source: "opencode", invoke: "" });
+      }
+    } catch {}
+  }
+  // dedup by category+name (e.g. a plugin listed via two paths)
+  const uniq = [], ukeys = new Set();
+  for (const it of out) { const k = it.category + ":" + it.name; if (!ukeys.has(k)) { ukeys.add(k); uniq.push(it); } }
+  res.json(uniq);
 });
 
 // see-only screenshot (cached)
