@@ -13,3 +13,5 @@ boot.err
 # controller workspace is a scratch space; keep only its instructions
 controller/*
 !controller/AGENTS.md
+s*.out
+s*.err
