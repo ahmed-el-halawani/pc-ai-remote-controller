@@ -72,7 +72,10 @@ function notify(text) {
 }
 
 function startPty(s, extraArgs = []) {
-  const { file, args } = agentCommand(s.meta.agent, extraArgs);
+  const extra = [...extraArgs];
+  // opencode CLI continues the chat's conversation when launched with --session
+  if (s.meta.agent === "opencode" && s.meta.ocSid) extra.push("--session", s.meta.ocSid);
+  const { file, args } = agentCommand(s.meta.agent, extra);
   fs.mkdirSync(s.meta.cwd, { recursive: true });
   const p = pty.spawn(file, args, {
     name: "xterm-color", cols: 80, rows: 30, cwd: s.meta.cwd, env: process.env,
@@ -99,13 +102,22 @@ function startPty(s, extraArgs = []) {
 
 function ensureStarted(s) { if (!s.pty) startPty(s); return s.pty; }
 
+// shared opencode conversation id (server-side, persisted) used by both the
+// chat (HTTP API) and the CLI (TUI launched with --session)
+async function ensureOcSid(s) {
+  if (s.meta.ocSid) return s.meta.ocSid;
+  const sess = await require("./opencode").createSession(s.meta.cwd, s.meta.name);
+  s.meta.ocSid = sess.id; persist();
+  return s.meta.ocSid;
+}
+
 function createSession({ name, cwd, agent, role }) {
   if (!cfg.agents[agent]) throw new Error(`Unknown agent '${agent}'`);
   const id = String(nextId++);
   const meta = { id, name: name || `${agent}-${id}`, cwd: path.resolve(cwd || cfg.workspacesRoot), agent, role: role || "coder" };
   const s = { meta, pty: null, buf: "", subs: new Set(), busy: false, idleTimer: null };
   sessions.set(id, s);
-  startPty(s);
+  if (agent !== "opencode") startPty(s); // opencode starts lazily on attach, after ocSid is set
   persist();
   return meta;
 }
@@ -318,8 +330,12 @@ app.get("/oc/models", async (_req, res) => {
   try { res.json(await opencode.listModels()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/oc/session", async (req, res) => {
-  try { res.json(await opencode.createSession(path.resolve(req.body.cwd || cfg.workspacesRoot), req.body.title)); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const s = sessions.get(req.body.session);
+    if (s) return res.json({ id: await ensureOcSid(s) }); // shared, persisted per app session
+    // fallback: ad-hoc session by cwd (e.g. no app session bound)
+    res.json(await opencode.createSession(path.resolve(req.body.cwd || cfg.workspacesRoot), req.body.title));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get("/oc/messages", async (req, res) => {
   try { res.json(await opencode.getMessages(req.query.sid)); } catch (e) { res.status(500).json({ error: e.message }); }
@@ -350,11 +366,13 @@ app.get("/sw.js", (_req, res) => res.sendFile(path.join(__dirname, "public", "sw
 // ---- websocket terminal ---------------------------------------------------
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
-server.on("upgrade", (req, socket, head) => {
+server.on("upgrade", async (req, socket, head) => {
   const url = new URL(req.url, "http://x");
   if (url.pathname !== "/ws" || url.searchParams.get("token") !== cfg.token) { socket.destroy(); return; }
   const s = sessions.get(url.searchParams.get("session"));
   if (!s) { socket.destroy(); return; }
+  // opencode CLI must continue the same conversation as the chat → ensure the id first
+  if (s.meta.agent === "opencode") { try { await ensureOcSid(s); } catch {} }
   wss.handleUpgrade(req, socket, head, (ws) => attach(ws, s));
 });
 function attach(ws, s) {

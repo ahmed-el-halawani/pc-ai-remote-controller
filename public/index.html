@@ -81,6 +81,8 @@
   #chatBar .box { flex: 1; display: flex; align-items: flex-end; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 2px 4px 2px 8px; }
   #chatInput { flex: 1; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 9px 4px; resize: none; max-height: 30vh; }
   #chatInput:focus { outline: none; }
+  #chatTools { display: flex; gap: 6px; padding: 6px 8px 0; overflow-x: auto; }
+  .tool { background: #21262d; border: 1px solid #30363d; border-radius: 16px; padding: 6px 12px; font-size: 13px; color: #c9d1d9; white-space: nowrap; flex: none; }
   #chatAtts { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 10px; }
   #chatAtts .chip { display: flex; align-items: center; gap: 4px; background: #21262d; border: 1px solid #30363d; border-radius: 12px; padding: 3px 8px; font-size: 12px; }
 </style>
@@ -116,8 +118,12 @@
     </div>
     <div id="chatMsgs"></div>
     <div id="chatAtts"></div>
+    <div id="chatTools">
+      <button class="tool" id="toolSkills">✦ Skills</button>
+      <button class="tool" id="toolPlugins">🔌 Plugins</button>
+      <button class="tool" id="toolContext">＠ Context</button>
+    </div>
     <div id="chatBar">
-      <button class="icon" id="chatLib" title="Skills / plugins / MCPs">✦</button>
       <button class="icon" id="chatAddBtn" title="Attach file/image">＋</button>
       <div class="box">
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
@@ -311,11 +317,9 @@ let chatModel = localStorage.getItem("ocModel") || "";
 let pendingAtts = []; // {filename, mime, dataUrl}
 
 async function ensureOcSession(s) {
-  const key = "ocsid:" + s.id;
-  let sid = localStorage.getItem(key);
-  if (sid) return sid;
-  const r = await api("/oc/session", { method: "POST", body: JSON.stringify({ cwd: s.cwd, title: s.name }) });
-  localStorage.setItem(key, r.id); return r.id;
+  // server keeps the opencode conversation id in session meta (shared across devices + the CLI tab)
+  const r = await api("/oc/session", { method: "POST", body: JSON.stringify({ session: s.id, cwd: s.cwd, title: s.name }) });
+  return r.id;
 }
 async function openChat(s) {
   active = s.id; activeSession = s;
@@ -327,6 +331,7 @@ async function openChat(s) {
     ocSid = await ensureOcSession(s);
     if (!chatModel) { const ms = await api("/oc/models").catch(() => []); chatModel = ms.find((m) => /free/i.test(m)) || ms[0] || ""; localStorage.setItem("ocModel", chatModel); }
     updateModelBtn();
+    allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
     await loadChat();
   } catch (e) { qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
   refresh();
@@ -393,7 +398,24 @@ async function sendChat() {
   qs("#chatSend").disabled = false;
 }
 qs("#chatSend").onclick = sendChat;
-qs("#chatLib").onclick = () => { if (activeSession) openAdd("skills"); };
+// quick-menus: Skills / Plugins / Context, plus inline "/" and "@" triggers
+async function libMenu(cats, title) {
+  if (!allSkills.length) await loadSkills().catch(() => {});
+  const items = allSkills.filter((s) => cats.includes(s.category || "skill"))
+    .map((s) => ({ label: s.description ? `${s.name} — ${s.description.slice(0, 40)}` : s.name, invoke: s.invoke, name: s.name }));
+  openMenu(title, items, (it) => insertText(it.invoke || it.name), { search: true });
+}
+qs("#toolSkills").onclick = () => libMenu(["skill", "builtin"], "Skills");
+qs("#toolPlugins").onclick = () => libMenu(["plugin", "mcp"], "Plugins");
+qs("#toolContext").onclick = () => { if (activeSession) openAdd("ctx"); };
+function stripLastChar(ch) {
+  const v = chatInput.value, p = chatInput.selectionStart;
+  if (v[p - 1] === ch) { chatInput.value = v.slice(0, p - 1) + v.slice(p); chatInput.setSelectionRange(p - 1, p - 1); }
+}
+chatInput.addEventListener("input", (e) => {
+  if (e.data === "/") { stripLastChar("/"); libMenu(["skill", "builtin"], "Skills"); }
+  else if (e.data === "@") { stripLastChar("@"); if (activeSession) openAdd("ctx"); }
+});
 qs("#chatCli").onclick = () => { if (activeSession) openTerminal(activeSession); };
 qs("#chatModelBtn").onclick = async () => {
   const ms = await api("/oc/models").catch(() => []);
