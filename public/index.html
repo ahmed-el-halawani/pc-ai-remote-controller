@@ -77,7 +77,13 @@
   .reason .reasontext { font-style: italic; white-space: pre-wrap; margin-top: 4px; }
   .thinking { align-self: flex-start; color: #8b949e; font-size: 13px; }
   .att { align-self: flex-end; max-width: 60%; border-radius: 12px; border: 1px solid #30363d; }
-  #chatBar { padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
+  #chatBar { position: relative; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
+  #acPop { position: absolute; left: 8px; right: 8px; bottom: calc(100% - 1px); max-height: 44vh; overflow-y: auto; background: #161b22; border: 1px solid #30363d; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 24px rgba(0,0,0,.45); display: none; z-index: 50; }
+  #acPop.show { display: block; }
+  #acPop .achdr { padding: 8px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #6e7681; position: sticky; top: 0; background: #161b22; }
+  #acPop .acitem { padding: 10px 12px; border-top: 1px solid #21262d; font-size: 14px; display: flex; gap: 6px; align-items: center; }
+  #acPop .acitem.sel, #acPop .acitem:active { background: #1f6feb22; }
+  #acPop .acd { color: #6e7681; font-size: 12px; }
   .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
   .composer-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
   #chatInput { width: 100%; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 4px 2px; resize: none; max-height: 30vh; }
@@ -120,6 +126,7 @@
     <div id="chatMsgs"></div>
     <div id="chatAtts"></div>
     <div id="chatBar">
+      <div id="acPop"></div>
       <div class="composer">
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
         <div class="composer-actions">
@@ -326,6 +333,7 @@ async function openChat(s) {
   active = s.id; activeSession = s;
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
   showView("vChat");
+  hideAC(); acCtxDir = null;
   qs("#chatMsgs").innerHTML = "<div class='thinking'>Loading…</div>";
   pendingAtts = []; renderAtts();
   try {
@@ -377,8 +385,17 @@ function renderAtts() {
 }
 const chatInput = qs("#chatInput");
 function growChat() { chatInput.style.height = "auto"; chatInput.style.height = Math.min(chatInput.scrollHeight, window.innerHeight * 0.3) + "px"; }
-chatInput.addEventListener("input", growChat);
-chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+chatInput.addEventListener("input", () => { growChat(); updateAC(); });
+chatInput.addEventListener("keydown", (e) => {
+  const ac = qs("#acPop");
+  if (ac.classList.contains("show")) {
+    if (e.key === "ArrowDown") { e.preventDefault(); return acMove(1); }
+    if (e.key === "ArrowUp") { e.preventDefault(); return acMove(-1); }
+    if (e.key === "Enter") { e.preventDefault(); if (acItems[acSel]) acItems[acSel].pick(); return; }
+    if (e.key === "Escape") { e.preventDefault(); return hideAC(); }
+  }
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
 async function sendChat() {
   const t = chatInput.value.trim();
   if (!t && !pendingAtts.length) return;
@@ -399,22 +416,75 @@ async function sendChat() {
   qs("#chatSend").disabled = false;
 }
 qs("#chatSend").onclick = sendChat;
-// quick-menus: Skills / Plugins / Context, plus inline "/" and "@" triggers
-async function libMenu(cats, title) {
-  if (!allSkills.length) await loadSkills().catch(() => {});
-  const items = allSkills.filter((s) => cats.includes(s.category || "skill"))
-    .map((s) => ({ label: s.description ? `${s.name} — ${s.description.slice(0, 40)}` : s.name, invoke: s.invoke, name: s.name }));
-  openMenu(title, items, (it) => insertText(it.invoke || it.name), { search: true });
-}
-qs("#toolLibrary").onclick = () => { if (activeSession) openAdd("skills"); }; // skills+plugins+mcps+built-in, sectioned
+qs("#toolLibrary").onclick = () => { if (activeSession) openAdd("skills"); }; // full sectioned sheet
 qs("#toolContext").onclick = () => { if (activeSession) openAdd("ctx"); };
-function stripLastChar(ch) {
-  const v = chatInput.value, p = chatInput.selectionStart;
-  if (v[p - 1] === ch) { chatInput.value = v.slice(0, p - 1) + v.slice(p); chatInput.setSelectionRange(p - 1, p - 1); }
+
+// ---- inline autocomplete (/ skills, @ files) above the input ----
+const acPop = qs("#acPop");
+let acItems = [], acSel = 0, acCtxDir = null, acCtxEntries = [];
+function hideAC() { acPop.classList.remove("show"); acPop.innerHTML = ""; acItems = []; }
+function getTrigger() {
+  const v = chatInput.value, pos = chatInput.selectionStart, before = v.slice(0, pos);
+  let m = before.match(/(^|\s)\/([^\s\/@]*)$/);          // /skill  (no slashes in the query)
+  if (m) return { char: "/", query: m[2], start: pos - m[2].length - 1 };
+  m = before.match(/(^|\s)@([^\s@]*)$/);                  // @path/to  (slashes allowed)
+  if (m) return { char: "@", query: m[2], start: pos - m[2].length - 1 };
+  return null;
 }
-chatInput.addEventListener("input", (e) => {
-  if (e.data === "/") { stripLastChar("/"); libMenu(["skill", "builtin"], "Skills"); }
-  else if (e.data === "@") { stripLastChar("@"); if (activeSession) openAdd("ctx"); }
+function replaceToken(t, text) {
+  const v = chatInput.value, pos = chatInput.selectionStart;
+  chatInput.value = v.slice(0, t.start) + text + v.slice(pos);
+  const np = t.start + text.length; chatInput.setSelectionRange(np, np);
+  chatInput.focus(); growChat(); updateAC(); // re-evaluate (dir nav keeps the popup open)
+}
+function acMove(d) {
+  acSel = (acSel + d + acItems.length) % acItems.length;
+  [...acPop.querySelectorAll(".acitem")].forEach((el, i) => el.classList.toggle("sel", i === acSel));
+  const sel = acPop.querySelector(".acitem.sel"); if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+function renderAC(items) {
+  if (!items.length) { hideAC(); return; }        // no match → disappear
+  acItems = items; acSel = 0; acPop.innerHTML = "";
+  let lastSec = null;
+  items.forEach((it, i) => {
+    if (it.section && it.section !== lastSec) { lastSec = it.section; const h = document.createElement("div"); h.className = "achdr"; h.textContent = it.section; acPop.appendChild(h); }
+    const d = document.createElement("div"); d.className = "acitem" + (i === acSel ? " sel" : ""); d.innerHTML = it.html;
+    d.onmousedown = (e) => { e.preventDefault(); it.pick(); }; // mousedown keeps the textarea focused
+    acPop.appendChild(d);
+  });
+  acPop.classList.add("show");
+}
+async function updateAC() {
+  if (!qs("#vChat").classList.contains("show")) return hideAC();
+  const t = getTrigger();
+  if (!t) return hideAC();                          // trigger deleted → disappear
+  if (t.char === "/") {
+    const q = t.query.toLowerCase();
+    const items = allSkills.filter((s) => ["skill", "builtin"].includes(s.category || "skill") && s.name.toLowerCase().includes(q))
+      .slice(0, 40).map((s) => ({
+        section: s.category === "builtin" ? "Built-in" : "Skills",
+        html: `<span>✦ ${s.name}</span>${s.description ? `<span class="acd">${s.description.slice(0, 38)}</span>` : ""}`,
+        pick: () => replaceToken(t, (s.invoke || ("/" + s.name)) + " "),
+      }));
+    renderAC(items);
+  } else {
+    const q = t.query, slash = q.lastIndexOf("/");
+    const dirPart = slash >= 0 ? q.slice(0, slash) : "", base = (slash >= 0 ? q.slice(slash + 1) : q).toLowerCase();
+    const dirAbs = activeSession.cwd + (dirPart ? "/" + dirPart : "");
+    if (acCtxDir !== dirAbs) {
+      try { acCtxEntries = (await api("/fs?mode=all&path=" + encodeURIComponent(dirAbs))).entries; acCtxDir = dirAbs; }
+      catch { acCtxEntries = []; acCtxDir = dirAbs; }
+    }
+    const items = acCtxEntries.filter((e) => e.name.toLowerCase().includes(base)).slice(0, 50).map((e) => {
+      const rel = (dirPart ? dirPart + "/" : "") + e.name;
+      return { section: "Context", html: (e.dir ? "📁 " : "📄 ") + e.name, pick: () => replaceToken(t, e.dir ? "@" + rel + "/" : "@" + rel + " ") };
+    });
+    renderAC(items);
+  }
+}
+// click outside → disappear (item taps use mousedown, so they don't trigger this)
+document.addEventListener("click", (e) => {
+  if (acPop.classList.contains("show") && !acPop.contains(e.target) && e.target !== chatInput) hideAC();
 });
 qs("#chatCli").onclick = async () => {
   if (!activeSession) return;
