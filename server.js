@@ -367,13 +367,8 @@ app.post("/oc/abort", async (req, res) => {
 // structured questions the agent asks (single/multiple choice, custom text)
 app.get("/oc/questions", async (req, res) => {
   try {
-    // session-scoped endpoint is the reliable one for a refresh-time pending question;
-    // global /question is directory-scoped and often returns [] for an idle session.
-    const sid = req.query.sid;
-    const list = sid
-      ? await opencode.ocJson(`/api/session/${encodeURIComponent(sid)}/question`)
-      : await opencode.ocJson("/question");
-    res.json(Array.isArray(list) ? list : (list.data || [])); // scoped endpoint wraps in {data:[]}
+    const all = await opencode.ocJson("/question");
+    res.json(req.query.sid ? all.filter((q) => q.sessionID === req.query.sid) : all);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/oc/question/reply", async (req, res) => {
