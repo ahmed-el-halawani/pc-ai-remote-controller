@@ -145,6 +145,9 @@
     <div id="chatTop">
       <button id="chatModelBtn">Model ▾</button>
       <span style="flex:1"></span>
+      <button id="chatSessions" title="Switch session">☰</button>
+      <button id="chatNewSame" title="New session, same workspace">⧉</button>
+      <button id="chatRefresh" title="Refresh / new terminal">⟳</button>
       <button id="chatCli" title="Switch to terminal">⌨ CLI</button>
     </div>
     <div id="chatMsgs"></div>
@@ -345,6 +348,10 @@ qs("#menuClose").onclick = () => qs("#dlgMenu").close();
 function buildOptbar(s) {
   const bar = qs("#optbar"); bar.innerHTML = "";
   const d = agents[s.agent] || {};
+  const quick = (label, title, fn) => { const b = document.createElement("button"); b.className = "optbtn"; b.textContent = label; b.title = title; b.onclick = fn; bar.appendChild(b); };
+  quick("☰", "Switch session", () => openSessionsMenu(s));
+  quick("⧉", "New session, same workspace", () => newSameWorkspace(s));
+  quick("⟳", "Refresh terminal", () => refreshSession(s));
   if (s.agent === "opencode") {
     const cb = document.createElement("button"); cb.className = "optbtn"; cb.textContent = "💬 Chat";
     cb.onclick = () => openChat(s); bar.appendChild(cb);
@@ -671,6 +678,31 @@ qs("#chatCli").onclick = async () => {
   try { await api("/sessions/" + s.id + "/restart", { method: "POST" }); } catch {}
   openTerminal(s); // reconnect → pty respawns fresh → opencode reloads the conversation
 };
+// restart the backing pty (clears it) and re-open the current view fresh
+async function refreshSession(s) {
+  if (!s) return;
+  try { await api("/sessions/" + s.id + "/restart", { method: "POST" }); } catch {}
+  if (term) term.reset();
+  if (s.agent === "opencode" && qs("#vChat").classList.contains("show")) openChat(s);
+  else openTerminal(s);
+}
+// spawn another session in the same workspace (same cwd + agent) and open it
+async function newSameWorkspace(s) {
+  if (!s) return;
+  const m = await api("/sessions", { method: "POST", body: JSON.stringify({ cwd: s.cwd, agent: s.agent }) });
+  await refresh(); openSession(m);
+}
+// menu to jump between sessions (ones sharing this workspace listed first)
+async function openSessionsMenu(cur) {
+  const list = await api("/sessions");
+  const items = list
+    .sort((a, b) => (b.cwd === cur.cwd) - (a.cwd === cur.cwd))
+    .map((s) => ({ label: (s.cwd === cur.cwd ? "● " : "○ ") + s.name + "  ·  " + s.agent, _s: s }));
+  openMenu("Sessions", items, (it) => openSession(it._s), { search: true });
+}
+qs("#chatSessions").onclick = () => openSessionsMenu(activeSession);
+qs("#chatNewSame").onclick = () => newSameWorkspace(activeSession);
+qs("#chatRefresh").onclick = () => refreshSession(activeSession);
 qs("#chatModelBtn").onclick = async () => {
   const ms = await api("/oc/models").catch(() => []);
   openMenu("Model", ms.map((m) => ({ label: m })), (it) => { chatModel = it.label; localStorage.setItem("ocModel", chatModel); updateModelBtn(); }, { search: true });
