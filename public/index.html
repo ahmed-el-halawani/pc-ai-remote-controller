@@ -345,7 +345,7 @@ let term, fit, ws;      // xterm + websocket for active session
 function showView(id) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("show", v.id === id));
   if (id === "screen") startScreen(); else stopScreen();
-  if (id !== "vChat") { hideAC(); stopEvents(); stopStatusPoll(); qs("#qWrap").classList.remove("show"); qReq = null; }
+  if (id !== "vChat") { chatGen++; hideAC(); stopEvents(); stopStatusPoll(); qs("#qWrap").classList.remove("show"); qReq = null; }
 }
 document.querySelectorAll("[data-view]").forEach((b) => b.onclick = () => showView(b.dataset.view));
 
@@ -491,6 +491,7 @@ let chatEffort = JSON.parse(localStorage.getItem("ocEffort") || "{}"); // model 
 let providers = {}; // "provider/model" -> { variants:[], reasoning }
 let agentList = ["build", "plan"];
 let pendingAtts = []; // {filename, mime, dataUrl}
+let chatGen = 0; // bumped on every openChat; stale async results from a prior session bail out
 
 async function ensureOcSession(s) {
   // server keeps the opencode conversation id in session meta (shared across devices + the CLI tab)
@@ -498,6 +499,8 @@ async function ensureOcSession(s) {
   return r.id;
 }
 async function openChat(s) {
+  const myGen = ++chatGen;
+  stopEvents(); stopStatusPoll(); // stop the previous session's sync immediately
   active = s.id; activeSession = s;
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
   showView("vChat");
@@ -514,18 +517,20 @@ async function openChat(s) {
   recomputeBusy(); // reflect cached state's busy (or clear a previous session's)
   try {
     ocSid = await ensureOcSession(s);
+    if (myGen !== chatGen) return; // navigated to another session while resolving
     if (!chatModel) { const ms = await api("/oc/models").catch(() => []); chatModel = ms.find((m) => /free/i.test(m)) || ms[0] || ""; localStorage.setItem("ocModel", chatModel); }
     updateModelBtn();
     loadModeEffort(); // mode (build/plan) + per-model effort menus
     allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
     await loadChat(); // fetches fresh state, re-renders, and updates the cache
+    if (myGen !== chatGen) return; // navigated away; don't start this session's sync
     syncBusy(); // reflect a turn that may already be running (e.g. started from the CLI)
     startEvents(); // live updates (thinking/tool/text stream in)
     startStatusPoll(); // keep tracking busy/model-wait even when SSE is quiet
     checkPendingQuestions(); // re-open a question asked before we connected
     flushQueue(); // send anything typed before ocSid was ready (never dropped)
-  } catch (e) { if (!(cached && cached.length)) qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
-  finally { showSync(false); }
+  } catch (e) { if (myGen === chatGen && !(cached && cached.length)) qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
+  finally { if (myGen === chatGen) showSync(false); }
   refresh();
 }
 // live event stream → reload the conversation as opencode streams parts
@@ -728,7 +733,8 @@ qs("#chatEffortBtn").onclick = () => {
 // authoritative busy state from opencode (survives missed SSE events / backgrounding)
 let busyType = "idle";
 async function syncBusy() {
-  try { const r = await api("/oc/status?sid=" + encodeURIComponent(ocSid)); serverBusy = !!r.busy; busyType = r.type || "idle"; recomputeBusy(); } catch {}
+  const sid = ocSid;
+  try { const r = await api("/oc/status?sid=" + encodeURIComponent(sid)); if (sid !== ocSid) return; serverBusy = !!r.busy; busyType = r.type || "idle"; recomputeBusy(); } catch {}
 }
 // continuous status poll while the chat is open: catches the agent becoming busy
 // from any source — a CLI-driven turn, or waiting on the model with nothing
@@ -744,7 +750,9 @@ function startStatusPoll() {
 }
 function stopStatusPoll() { if (statusPoll) { clearInterval(statusPoll); statusPoll = null; } }
 async function loadChat() {
-  const list = await api("/oc/messages?sid=" + ocSid);
+  const sid = ocSid;
+  const list = await api("/oc/messages?sid=" + sid);
+  if (sid !== ocSid) return; // session switched while loading — drop the stale result
   lastMsgList = list;
   const last = list[list.length - 1]; // track streaming activity (content changing) for isWorking
   const sig = last ? (last.info && last.info.id) + ":" + JSON.stringify(last.parts || []).length : "";
