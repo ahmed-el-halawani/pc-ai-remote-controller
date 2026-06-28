@@ -740,7 +740,7 @@ function startStatusPoll() {
     if (!ocSid || !qs("#vChat").classList.contains("show")) return;
     await syncBusy();
     if (isWorking()) scheduleReload(); // pull any new parts during a quiet model-wait / CLI turn
-  }, 10000);
+  }, 5000);
 }
 function stopStatusPoll() { if (statusPoll) { clearInterval(statusPoll); statusPoll = null; } }
 async function loadChat() {
