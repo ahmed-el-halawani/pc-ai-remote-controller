@@ -55,6 +55,7 @@ const createSession = (dir, title) =>
 
 const getMessages = (sid) => ocJson(`/session/${sid}/message`);
 const getConfig = () => ocJson(`/config`); // { mcp, plugin, agent, command, ... }
+const abort = (sid) => oc(`/session/${sid}/abort`, { method: "POST" }).then(() => true).catch(() => false);
 
 function sendMessage(sid, model, parts) {
   const body = { parts };
@@ -70,4 +71,4 @@ function sendMessage(sid, model, parts) {
 // proxy a binary file part (image/attachment) the opencode server stored
 const fileUrl = (sid, partUrl) => BASE + partUrl; // opencode part.url is a server-relative path
 
-module.exports = { start, listModels, createSession, getMessages, getConfig, sendMessage, BASE, ocJson };
+module.exports = { start, listModels, createSession, getMessages, getConfig, sendMessage, abort, BASE, ocJson };

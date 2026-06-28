@@ -361,6 +361,9 @@ app.post("/oc/session", async (req, res) => {
 app.get("/oc/messages", async (req, res) => {
   try { res.json(await opencode.getMessages(req.query.sid)); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.post("/oc/abort", async (req, res) => {
+  try { res.json({ ok: await opencode.abort(req.body.sid) }); } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // data-URL attachments can't be read by the model — write them into the project
 // (<cwd>/.oc-uploads/) and reference by file:// path so opencode reads them.
 function materializeAttachments(parts, cwd) {

@@ -31,8 +31,9 @@
   #msgInput { flex: 1; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 9px 4px; resize: none; max-height: 30vh; }
   #msgInput:focus { outline: none; }
   #inputbar .icon, #chatBar .icon { background: transparent; border: none; color: #8b949e; font-size: 17px; padding: 7px; border-radius: 50%; line-height: 1; }
-  #inputbar .icon.rec { color: #fb6a3c; }
-  #send, #chatSend { background: #fb6a3c; border: none; color: #fff; width: 40px; height: 40px; border-radius: 50%; font-size: 17px; flex: none; }
+  #inputbar .icon.rec, #chatBar .icon.rec { color: #fb6a3c; }
+  #send, #chatSend { background: #fb6a3c; border: none; color: #fff; width: 42px; height: 42px; border-radius: 50%; font-size: 20px; font-weight: 600; flex: none; }
+  #chatSend.stop { background: #e5534b; font-size: 16px; }
   #send:disabled, #chatSend:disabled { background: #30363d; color: #8b949e; }
   .grp { display: flex; align-items: center; gap: 4px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 2px 4px; }
   .grp label { color: #8b949e; font-size: 11px; }
@@ -84,14 +85,17 @@
   .acpop .acitem { padding: 10px 12px; border-top: 1px solid #21262d; font-size: 14px; display: flex; gap: 6px; align-items: center; }
   .acpop .acitem.sel, .acpop .acitem:active { background: #1f6feb22; }
   .acpop .acd { color: #6e7681; font-size: 12px; }
-  .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 16px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
   .composer-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
   #chatInput { width: 100%; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 4px 2px; resize: none; max-height: 30vh; }
   #chatInput:focus { outline: none; }
   .tool { display: inline-flex; align-items: center; gap: 7px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; padding: 7px 12px; font-size: 13px; color: #c9d1d9; white-space: nowrap; flex: none; }
   .tool .ico { font-size: 15px; line-height: 1; opacity: .85; }
-  #chatAtts { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 10px; }
-  #chatAtts .chip { display: flex; align-items: center; gap: 4px; background: #21262d; border: 1px solid #30363d; border-radius: 12px; padding: 3px 8px; font-size: 12px; }
+  #chatAtts { display: flex; gap: 10px; flex-wrap: wrap; padding: 8px 10px 0; }
+  .attthumb { position: relative; width: 74px; height: 74px; border-radius: 14px; overflow: hidden; background: #21262d; border: 1px solid #30363d; flex: none; }
+  .attthumb img { width: 100%; height: 100%; object-fit: cover; }
+  .attthumb .attfile { display: flex; align-items: center; justify-content: center; height: 100%; padding: 6px; font-size: 11px; text-align: center; word-break: break-word; color: #adbac7; }
+  .attthumb .attx { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; }
 </style>
 </head>
 <body>
@@ -133,9 +137,10 @@
         <div class="composer-actions">
           <button class="tool" id="toolLibrary"><span class="ico">☰</span> Library</button>
           <button class="tool" id="toolContext"><span class="ico">☰</span> Context</button>
-          <button class="icon" id="chatAddBtn" title="Attach file/image">＋</button>
           <span style="flex:1"></span>
-          <button id="chatSend" title="Send">➤</button>
+          <button class="icon" id="chatAddBtn" title="Attach">📎</button>
+          <button class="icon" id="chatMic" title="Dictate">🎤</button>
+          <button id="chatSend" title="Send">↑</button>
         </div>
       </div>
     </div>
@@ -378,11 +383,12 @@ function renderMessages(list) {
 function renderAtts() {
   const a = qs("#chatAtts"); a.innerHTML = "";
   pendingAtts.forEach((att, i) => {
-    const chip = document.createElement("div"); chip.className = "chip";
-    chip.innerHTML = `<span>📎 ${att.filename}</span>`;
-    const x = document.createElement("button"); x.textContent = "✕"; x.style.cssText = "background:none;border:none;color:#8b949e;padding:0";
+    const w = document.createElement("div"); w.className = "attthumb";
+    if (att.mime.startsWith("image/")) { const im = document.createElement("img"); im.src = att.dataUrl; w.appendChild(im); }
+    else { const f = document.createElement("div"); f.className = "attfile"; f.textContent = "📄 " + att.filename; w.appendChild(f); }
+    const x = document.createElement("button"); x.className = "attx"; x.textContent = "✕";
     x.onclick = () => { pendingAtts.splice(i, 1); renderAtts(); };
-    chip.appendChild(x); a.appendChild(chip);
+    w.appendChild(x); a.appendChild(w);
   });
 }
 const chatInput = qs("#chatInput");
@@ -390,8 +396,20 @@ function growChat() { chatInput.style.height = "auto"; chatInput.style.height = 
 chatInput.addEventListener("input", () => { growChat(); updateAC(); });
 chatInput.addEventListener("keydown", (e) => {
   if (acKeydown(e)) return;
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!chatSending) sendChat(); }
 });
+let chatSending = false, sendAbort = null;
+function setSending(on) {
+  chatSending = on;
+  const b = qs("#chatSend");
+  b.classList.toggle("stop", on);
+  b.textContent = on ? "■" : "↑";
+  b.title = on ? "Stop" : "Send";
+}
+function stopChat() {
+  if (sendAbort) sendAbort.abort();
+  if (ocSid) api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }).catch(() => {});
+}
 async function sendChat() {
   const t = chatInput.value.trim();
   if (!t && !pendingAtts.length) return;
@@ -404,14 +422,17 @@ async function sendChat() {
   if (t) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = t; c.appendChild(d); }
   const think = document.createElement("div"); think.className = "thinking"; think.textContent = "opencode is working…"; c.appendChild(think); c.scrollTop = c.scrollHeight;
   chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
-  qs("#chatSend").disabled = true;
+  sendAbort = new AbortController(); setSending(true);
   try {
-    await api("/oc/send", { method: "POST", body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd }) });
+    await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd }) });
     await loadChat();
-  } catch (e) { think.textContent = "⚠️ " + e.message; }
-  qs("#chatSend").disabled = false;
+  } catch (e) {
+    if (e.name === "AbortError") { think.textContent = "⏹ stopped"; await loadChat().catch(() => {}); }
+    else think.textContent = "⚠️ " + e.message;
+  }
+  setSending(false); sendAbort = null;
 }
-qs("#chatSend").onclick = sendChat;
+qs("#chatSend").onclick = () => { if (chatSending) stopChat(); else sendChat(); };
 qs("#toolLibrary").onclick = () => { if (activeSession) openAdd("skills"); }; // full sectioned sheet
 qs("#toolContext").onclick = () => { if (activeSession) openAdd("ctx"); };
 
@@ -521,6 +542,15 @@ chatInput.addEventListener("paste", async (e) => {
   for (const it of items) { const f = it.getAsFile(); if (f) pendingAtts.push(await fileToAtt(f)); }
   renderAtts();
 });
+// chat dictation (native SpeechRecognition)
+(() => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { qs("#chatMic").style.display = "none"; return; }
+  const rec = new SR(); rec.interimResults = false; rec.continuous = false; let on = false;
+  rec.onresult = (e) => { const tx = e.results[0][0].transcript; chatInput.value += (chatInput.value && !chatInput.value.endsWith(" ") ? " " : "") + tx; chatInput.dispatchEvent(new Event("input")); };
+  rec.onend = () => { on = false; qs("#chatMic").classList.remove("rec"); };
+  qs("#chatMic").onclick = () => { if (on) { rec.stop(); return; } try { rec.start(); on = true; qs("#chatMic").classList.add("rec"); } catch {} };
+})();
 
 // ---- skills + context menu (the "+" sheet) ----
 function insertText(t) {
