@@ -360,7 +360,10 @@ async function refresh() {
     const b = document.createElement("button");
     b.textContent = (s.alive ? "● " : "○ ") + s.name;
     b.className = s.id === active ? "active" : "";
-    b.onclick = () => openSession(s);
+    b.onclick = () => { // highlight immediately on click, before the async open
+      active = s.id; [...tabs.children].forEach((el) => el.classList.remove("active")); b.classList.add("active");
+      openSession(s);
+    };
     tabs.appendChild(b);
   });
   // home cards
