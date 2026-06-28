@@ -446,7 +446,7 @@ function maybeTextQuestion(list) {
     && p.state && p.state.status === "running" && p.state.input && p.state.input.questions);
   let req = null;
   if (qtool) {
-    req = { synthetic: true, questions: qtool.state.input.questions.map((q) => ({ ...q, multiple: !!q.multiple, custom: true })) };
+    req = { synthetic: true, fromTool: true, questions: qtool.state.input.questions.map((q) => ({ ...q, multiple: !!q.multiple, custom: true })) };
   } else {
     const text = (last.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
     req = parseTextQuestions(text);
@@ -487,8 +487,11 @@ qs("#qNext").onclick = async () => {
   qAnswers[qIdx] = collectCurrent();
   if (qIdx < qReq.questions.length - 1) { qIdx++; renderQuestion(); return; }
   const req = qReq; qReq = null; qs("#qWrap").classList.remove("show");
-  if (req.synthetic) { // typed question: reply as a normal chat message
+  if (req.synthetic) { // no recoverable requestID: reply as a normal message
     answeredMsgId = req.msgId;
+    // a structured question tool blocks the turn — a new message would QUEUE behind it.
+    // abort the stuck turn first so our answer starts a fresh one.
+    if (req.fromTool) { try { await api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }); } catch {} }
     chatInput.value = req.questions.map((q, i) => "• " + q.question + " → " + (qAnswers[i] || []).join(", ")).join("\n");
     growChat(); sendChat();
     return;
