@@ -100,9 +100,23 @@
   .reason summary { display: flex; align-items: center; gap: 6px; color: #8b949e; }
   .reason .reasontext { font-style: italic; white-space: pre-wrap; margin-top: 4px; }
   .ic { width: 15px; height: 15px; flex: none; vertical-align: -2px; }
-  .toolcard { display: flex; align-items: center; gap: 7px; }
+  .toolcard { align-self: flex-start; max-width: 88%; }
+  .toolcard summary { display: flex; align-items: center; gap: 7px; cursor: pointer; list-style: none; }
+  .toolcard summary::-webkit-details-marker { display: none; }
   .toolcard .ic { color: #58a6ff; }
-  .toolcard span { word-break: break-all; }
+  .toolcard summary > span { word-break: break-all; }
+  .toolbody { margin-top: 6px; }
+  .toolbody pre { background: #010409; border: 1px solid #30363d; border-radius: 8px; padding: 8px 10px; margin: 4px 0 0; overflow-x: auto; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+  .toolbody pre.toolout { color: #8b949e; }
+  .runspin { width: 11px; height: 11px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin .7s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* client-side queued messages (sent while the agent is busy) */
+  #chatQueue:empty { display: none; }
+  #chatQueue { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 8px; }
+  .qmsg { display: flex; align-items: center; gap: 8px; background: #161b22; border: 1px dashed #495057; border-radius: 12px; padding: 7px 10px; font-size: 13px; }
+  .qmsg .qbadge { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: #d29922; border: 1px solid #d29922; border-radius: 6px; padding: 1px 6px; flex: none; }
+  .qmsg .qtext { flex: 1; min-width: 0; color: #adbac7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qmsg .qx { background: transparent; border: none; color: #8b949e; font-size: 15px; padding: 2px 4px; flex: none; }
   .thinking { align-self: flex-start; color: #8b949e; font-size: 13px; }
   .att { align-self: flex-end; max-width: 60%; border-radius: 12px; border: 1px solid #30363d; }
   #chatBar { position: relative; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
@@ -196,6 +210,7 @@
     <div id="chatMsgs"></div>
     <div id="chatBar">
       <div id="acPop" class="acpop"></div>
+      <div id="chatQueue"></div>
       <div id="chatWorking" class="working"></div>
       <div class="composer">
         <div id="chatAtts"></div>
@@ -302,8 +317,9 @@ if (window.DOMPurify) DOMPurify.addHook("afterSanitizeAttributes", (n) => {
 function md(text) {
   text = text || "";
   if (window.marked && window.DOMPurify) { try { return DOMPurify.sanitize(marked.parse(text, { breaks: true })); } catch {} }
-  const d = document.createElement("div"); d.textContent = text; return d.innerHTML; // fallback: escaped plain text
+  return esc(text); // fallback: escaped plain text
 }
+function esc(s) { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
 
 // dismiss any dialog (bottom sheet) when pressing outside its box
 document.querySelectorAll("dialog").forEach((d) => {
@@ -469,6 +485,7 @@ async function openChat(s) {
   hideAC(); acCtxDir = null;
   qReq = null; answeredMsgId = null; qs("#qWrap").classList.remove("show"); // re-evaluate questions for this session
   planReq = null; resolvedPlanId = null; qs("#planWrap").classList.remove("show"); // re-evaluate plans for this session
+  msgQueue = []; renderQueue(); // queued sends are per-session
   qs("#chatMsgs").innerHTML = "<div class='thinking'>Loading…</div>";
   pendingAtts = []; renderAtts();
   try {
@@ -683,8 +700,15 @@ async function syncBusy() {
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
   renderMessages(list);
+  // a running tool (e.g. a server/bash the agent is waiting on) means still busy —
+  // keep the stop button even if a stray idle came through.
+  if (hasRunningTool(list)) setSending(true);
   maybeTextQuestion(list);
   maybePlan(list);
+}
+function hasRunningTool(list) {
+  const last = [...list].reverse().find((m) => m.info && m.info.role === "assistant");
+  return !!(last && (last.parts || []).some((p) => p.type === "tool" && p.state && (p.state.status === "running" || p.state.status === "pending")));
 }
 // lucide/Linear-style stroke icons (inline so no icon dependency)
 const SVG = (p) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -730,8 +754,19 @@ function renderMessages(list) {
         const tx = document.createElement("div"); tx.className = "reasontext"; tx.textContent = p.text.trim();
         d.append(sm, tx); c.appendChild(d);
       } else if (p.type === "tool") {
-        const d = document.createElement("div"); d.className = "toolcard";
-        d.innerHTML = (p.state && p.state.status === "error" ? ICON.alert : (ICON[p.tool] || ICON.tool)) + "<span>" + toolLabel(p) + "</span>";
+        const st = p.state || {}, running = st.status === "running" || st.status === "pending";
+        const d = document.createElement("details"); d.className = "toolcard"; // collapsed by default
+        const ic = st.status === "error" ? ICON.alert : (ICON[p.tool] || ICON.tool);
+        const sm = document.createElement("summary");
+        sm.innerHTML = ic + `<span>${esc(toolLabel(p))}</span>` + (running ? '<span class="runspin"></span>' : '');
+        d.appendChild(sm);
+        const cmd = st.input && (st.input.command || st.input.filePath || st.input.pattern || st.input.description);
+        const out = st.status === "error" ? (st.error || "") : (st.output || "");
+        if (cmd || out) {
+          const body = document.createElement("div"); body.className = "toolbody";
+          body.innerHTML = (cmd ? `<pre>${esc(String(cmd))}</pre>` : "") + (out ? `<pre class="toolout">${esc(String(out).slice(0, 4000))}</pre>` : "");
+          d.appendChild(body);
+        }
         c.appendChild(d);
       } else if (p.type === "file" && p.mime && p.mime.startsWith("image/") && p.url) {
         const img = document.createElement("img"); img.className = "att"; img.src = "/oc/file?url=" + encodeURIComponent(p.url) + "&token=" + encodeURIComponent(TOKEN); c.appendChild(img);
@@ -789,23 +824,47 @@ function setSending(on) {
   // while sending, backstop a missed idle event: poll opencode's real status
   clearInterval(busyPoll); busyPoll = null;
   if (on) busyPoll = setInterval(() => { if (ocSid) syncBusy(); else { clearInterval(busyPoll); busyPoll = null; } }, 5000);
+  else flushQueue(); // session free -> send the next queued message
 }
 function stopChat() {
   if (sendAbort) sendAbort.abort();
   if (ocSid) api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }).catch(() => {});
 }
-async function sendChat() {
+// client-side send queue: while the agent is busy, new messages wait here
+// (opencode exposes no queue API) so the user can see + remove them before they go.
+let msgQueue = [];
+function renderQueue() {
+  const q = qs("#chatQueue"); q.innerHTML = "";
+  msgQueue.forEach((item, i) => {
+    const row = document.createElement("div"); row.className = "qmsg";
+    const label = item.text || (item.atts.length + " attachment(s)");
+    row.innerHTML = `<span class="qbadge">Queued</span><span class="qtext"></span><button class="qx" title="Remove">✕</button>`;
+    row.querySelector(".qtext").textContent = label;
+    row.querySelector(".qx").onclick = () => { msgQueue.splice(i, 1); renderQueue(); };
+    q.appendChild(row);
+  });
+}
+function flushQueue() { // send the next queued message once the session is free
+  if (chatSending || !msgQueue.length || !ocSid) return;
+  const item = msgQueue.shift(); renderQueue(); doSend(item);
+}
+function sendChat() {
   const t = chatInput.value.trim();
   if (!t && !pendingAtts.length) return;
+  const item = { text: t, atts: pendingAtts.slice() };
+  chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
+  if (chatSending) { msgQueue.push(item); renderQueue(); return; } // busy -> queue it
+  doSend(item);
+}
+async function doSend(item) {
   const parts = [];
-  pendingAtts.forEach((a) => parts.push({ type: "file", mime: a.mime, filename: a.filename, url: a.dataUrl }));
-  if (t) parts.push({ type: "text", text: t });
+  item.atts.forEach((a) => parts.push({ type: "file", mime: a.mime, filename: a.filename, url: a.dataUrl }));
+  if (item.text) parts.push({ type: "text", text: item.text });
   // optimistic user bubble (working indicator is the persistent #chatWorking bar)
   const c = qs("#chatMsgs");
-  pendingAtts.filter((a) => a.mime.startsWith("image/")).forEach((a) => { const im = document.createElement("img"); im.className = "att"; im.src = a.dataUrl; c.appendChild(im); });
-  if (t) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = t; c.appendChild(d); }
+  item.atts.filter((a) => a.mime.startsWith("image/")).forEach((a) => { const im = document.createElement("img"); im.className = "att"; im.src = a.dataUrl; c.appendChild(im); });
+  if (item.text) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = item.text; c.appendChild(d); }
   const think = document.createElement("div"); think.className = "thinking"; c.appendChild(think); c.scrollTop = c.scrollHeight; // holds error/stopped text
-  chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
   sendAbort = new AbortController(); setSending(true);
   try {
     await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd, agent: chatAgent, variant: chatEffort[chatModel] || undefined }) });
