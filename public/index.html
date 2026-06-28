@@ -425,15 +425,26 @@ function parseTextQuestions(text) {
   const valid = questions.filter((q) => q.options.length >= 2);
   return valid.length ? { synthetic: true, questions: valid } : null;
 }
-// when the assistant's *last* message is a typed question, pop the sheet
+// when the assistant's *last* message is a question, pop the sheet. Two cases:
+//  - structured: a `question` tool part still running (data in state.input.questions)
+//  - typed: a plain-text "...?" + bullets question (parseTextQuestions)
+// Either way we reply as a normal chat message (the pending-question REST registry
+// isn't recoverable after a reload), so both are flagged synthetic.
 function maybeTextQuestion(list) {
   if (qReq || chatSending) return;
   const last = list[list.length - 1];
   if (!last || !(last.info && last.info.role === "assistant")) return;
   if (last.info.id === answeredMsgId) return;
-  const text = (last.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
-  const req = parseTextQuestions(text);
-  if (req) { req.id = "txt:" + last.info.id; req.msgId = last.info.id; openQuestions(req); }
+  const qtool = (last.parts || []).find((p) => p.type === "tool" && p.tool === "question"
+    && p.state && p.state.status === "running" && p.state.input && p.state.input.questions);
+  let req = null;
+  if (qtool) {
+    req = { synthetic: true, questions: qtool.state.input.questions.map((q) => ({ ...q, multiple: !!q.multiple, custom: true })) };
+  } else {
+    const text = (last.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
+    req = parseTextQuestions(text);
+  }
+  if (req) { req.id = "q:" + last.info.id; req.msgId = last.info.id; openQuestions(req); }
 }
 function openQuestions(req) {
   if (!req || !req.questions || !req.questions.length) return;
