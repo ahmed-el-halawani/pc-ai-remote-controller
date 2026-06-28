@@ -477,8 +477,8 @@ let planReq = null, resolvedPlanId = null;
 // a message is a plan if produced in Plan mode, or its text reads like a plan proposal
 function isPlan(text) {
   text = text || "";
-  const heading = /(^|\n)\s*#{1,4}\s*plan\b/i.test(text);
-  const proceed = /\b(ready to proceed|proceed with (the )?(implementation|build|building|plan|this)|shall i proceed|do you want (me to proceed|any changes)|approve (the )?plan|ready to (implement|build|start))\b\??/i.test(text)
+  const heading = /(^|\n)#{1,4}[^\n]*\bplan\b/i.test(text); // "## Plan:" or "## Updated Plan: …"
+  const proceed = /\b(ready to (proceed|implement|build|start|go)|proceed with (the )?(implementation|build|building|plan|this)|shall i proceed|do you want (me to proceed|any changes)|approve (the )?plan|implement when you('?re| are) ready)\b\??/i.test(text)
                || /(proceed|continue)\s+with\s+implementation\??/i.test(text);
   return heading || proceed;
 }
