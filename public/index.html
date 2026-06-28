@@ -505,7 +505,7 @@ async function openChat(s) {
   qReq = null; answeredMsgId = null; qs("#qWrap").classList.remove("show"); // re-evaluate questions for this session
   planReq = null; resolvedPlanId = null; qs("#planWrap").classList.remove("show"); // re-evaluate plans for this session
   msgQueue = []; renderQueue(); // queued sends are per-session
-  serverBusy = false; lastMsgList = []; // reset busy state for the new session
+  serverBusy = false; lastMsgList = []; inFlight = false; suppressId = null; lastSig = ""; lastActivityAt = 0; // reset busy state for the new session
   pendingAtts = []; renderAtts();
   // show the cached state instantly (if any), then refresh in the background
   const cached = loadCache(s.id);
@@ -739,13 +739,16 @@ function startStatusPoll() {
   statusPoll = setInterval(async () => {
     if (!ocSid || !qs("#vChat").classList.contains("show")) return;
     await syncBusy();
-    if (serverBusy) scheduleReload(); // pull any new parts during a quiet model-wait
+    if (isWorking()) scheduleReload(); // pull any new parts during a quiet model-wait / CLI turn
   }, 10000);
 }
 function stopStatusPoll() { if (statusPoll) { clearInterval(statusPoll); statusPoll = null; } }
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
   lastMsgList = list;
+  const last = list[list.length - 1]; // track streaming activity (content changing) for isWorking
+  const sig = last ? (last.info && last.info.id) + ":" + JSON.stringify(last.parts || []).length : "";
+  if (sig && sig !== lastSig) { lastSig = sig; lastActivityAt = Date.now(); }
   if (active) saveCache(active, list); // persist on every action/event so the cache is always current
   renderMessages(list);
   recomputeBusy(); // a running tool (server/bash the agent waits on) keeps it busy
@@ -867,8 +870,22 @@ let chatSending = false, sendAbort = null;
 // single source of truth for "busy": the session's own status OR a still-running
 // tool (a server/bash the agent is waiting on). The only thing that flips the
 // Stop button / loading bar — every caller sets its input then recomputes.
-let serverBusy = false, lastMsgList = [];
-function recomputeBusy() { setSending(serverBusy || hasRunningTool(lastMsgList)); }
+let serverBusy = false, lastMsgList = [], inFlight = false, suppressId = null;
+// "is a turn running?" — /session/status is unreliable (often idle mid-turn), so:
+//  - inFlight: our own /oc/send call is open (blocks for the whole turn)
+//  - incomplete last assistant message: covers CLI-driven turns + the model-wait
+//    and streaming phases (no time.completed yet)
+//  - a running tool, or status=busy when it does report it
+// suppressId clears a turn we explicitly stopped so it doesn't linger.
+let lastSig = "", lastActivityAt = 0; // detect streaming (content changing) vs an abandoned incomplete turn
+function isWorking() {
+  const last = lastMsgList[lastMsgList.length - 1];
+  const incompleteAssistant = !!(last && last.info && last.info.role === "assistant"
+    && !(last.info.time && last.info.time.completed) && last.info.id !== suppressId
+    && Date.now() - lastActivityAt < 30000); // still streaming recently (not a stale/aborted turn)
+  return inFlight || serverBusy || hasRunningTool(lastMsgList) || incompleteAssistant;
+}
+function recomputeBusy() { setSending(isWorking()); }
 function setSending(on) {
   chatSending = on;
   const b = qs("#chatSend");
@@ -880,7 +897,11 @@ function setSending(on) {
 }
 function stopChat() {
   if (sendAbort) sendAbort.abort();
+  inFlight = false;
+  const last = lastMsgList[lastMsgList.length - 1]; // don't let the stopped (still-incomplete) turn linger as "working"
+  if (last && last.info) suppressId = last.info.id;
   if (ocSid) api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }).catch(() => {});
+  recomputeBusy();
 }
 // client-side send queue: while the agent is busy, new messages wait here
 // (opencode exposes no queue API) so the user can see + remove them before they go.
@@ -918,7 +939,7 @@ async function doSend(item) {
   item.atts.filter((a) => a.mime.startsWith("image/")).forEach((a) => { const im = document.createElement("img"); im.className = "att"; im.src = a.dataUrl; c.appendChild(im); });
   if (item.text) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = item.text; c.appendChild(d); }
   const think = document.createElement("div"); think.className = "thinking"; c.appendChild(think); c.scrollTop = c.scrollHeight; // holds error/stopped text
-  sendAbort = new AbortController(); serverBusy = true; recomputeBusy();
+  sendAbort = new AbortController(); inFlight = true; suppressId = null; recomputeBusy();
   try {
     await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd, agent: chatAgent, variant: chatEffort[chatModel] || undefined }) });
     await loadChat();
@@ -926,7 +947,7 @@ async function doSend(item) {
     if (e.name === "AbortError") { think.textContent = "⏹ stopped"; await loadChat().catch(() => {}); }
     else think.textContent = "⚠️ " + e.message;
   }
-  serverBusy = false; recomputeBusy(); sendAbort = null; // a still-running tool keeps it busy
+  inFlight = false; recomputeBusy(); sendAbort = null; // a still-running tool / incomplete turn keeps it busy
 }
 qs("#chatSend").onclick = () => { if (chatSending) stopChat(); else sendChat(); };
 qs("#toolLibrary").onclick = () => { if (activeSession) openAdd("skills"); }; // full sectioned sheet
