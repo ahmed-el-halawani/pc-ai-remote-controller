@@ -110,6 +110,11 @@
   .toolbody pre.toolout { color: #8b949e; }
   .runspin { width: 11px; height: 11px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin .7s linear infinite; flex: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* subtle "syncing fresh state over the cache" chip in the chat top bar */
+  #chatSync { display: none; align-items: center; gap: 6px; font-size: 12px; color: #8b949e; }
+  #chatSync.show { display: inline-flex; }
+  #chatSync::before { content: ""; width: 11px; height: 11px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin .7s linear infinite; }
+  #chatSync::after { content: "Syncing…"; }
   /* client-side queued messages (sent while the agent is busy) */
   #chatQueue:empty { display: none; }
   #chatQueue { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 8px; }
@@ -201,6 +206,7 @@
   <div class="view" id="screen"><img id="shot" alt="screen" /></div>
   <div class="view" id="vChat">
     <div id="chatTop">
+      <span id="chatSync" title="Syncing…"></span>
       <span style="flex:1"></span>
       <button id="chatSessions" title="Switch session">☰</button>
       <button id="chatNewSame" title="New session, same workspace">⧉</button>
@@ -364,7 +370,7 @@ async function refresh() {
     const c = document.createElement("div"); c.className = "card";
     c.innerHTML = `<div class="grow"><b>${s.name}</b><small>${s.agent} · ${s.role} · ${s.alive ? "running" : "stopped"}</small><small class="pill">${s.cwd}</small></div>`;
     const open = document.createElement("button"); open.textContent = "Open"; open.onclick = () => openSession(s);
-    const del = document.createElement("button"); del.textContent = "✕"; del.onclick = async () => { await api("/sessions/" + s.id, { method: "DELETE" }); if (active === s.id) { active = null; } refresh(); };
+    const del = document.createElement("button"); del.textContent = "✕"; del.onclick = async () => { await api("/sessions/" + s.id, { method: "DELETE" }); try { localStorage.removeItem(cacheKey(s.id)); } catch {} if (active === s.id) { active = null; } refresh(); };
     c.append(open, del); h.appendChild(c);
   });
 }
@@ -466,6 +472,19 @@ function buildOptbar(s) {
 
 // ---- opencode chat GUI ----
 let ocSid = null;
+// per-session message cache (keyed by app session id, known before the network round-trip)
+// so reopening a session shows its last state instantly while fresh data loads.
+const cacheKey = (id) => "chat:" + id;
+function loadCache(id) { try { const v = localStorage.getItem(cacheKey(id)); return v ? JSON.parse(v) : null; } catch { return null; } }
+function saveCache(id, list) {
+  if (!id || !list) return;
+  const trim = (n) => JSON.stringify(list.slice(-n));
+  try { localStorage.setItem(cacheKey(id), trim(80)); }
+  catch { // quota: drop other sessions' caches, then store a smaller slice
+    try { Object.keys(localStorage).forEach((k) => { if (k.startsWith("chat:") && k !== cacheKey(id)) localStorage.removeItem(k); }); localStorage.setItem(cacheKey(id), trim(40)); } catch {}
+  }
+}
+function showSync(on) { qs("#chatSync").classList.toggle("show", on); }
 let chatModel = localStorage.getItem("ocModel") || "";
 let chatAgent = localStorage.getItem("ocAgent") || "build"; // mode: build / plan
 let chatEffort = JSON.parse(localStorage.getItem("ocEffort") || "{}"); // model -> variant
@@ -487,19 +506,24 @@ async function openChat(s) {
   planReq = null; resolvedPlanId = null; qs("#planWrap").classList.remove("show"); // re-evaluate plans for this session
   msgQueue = []; renderQueue(); // queued sends are per-session
   serverBusy = false; lastMsgList = []; // reset busy state for the new session
-  qs("#chatMsgs").innerHTML = "<div class='thinking'>Loading…</div>";
   pendingAtts = []; renderAtts();
+  // show the cached state instantly (if any), then refresh in the background
+  const cached = loadCache(s.id);
+  if (cached && cached.length) { lastMsgList = cached; renderMessages(cached); showSync(true); }
+  else qs("#chatMsgs").innerHTML = "<div class='thinking'>Loading…</div>";
+  recomputeBusy(); // reflect cached state's busy (or clear a previous session's)
   try {
     ocSid = await ensureOcSession(s);
     if (!chatModel) { const ms = await api("/oc/models").catch(() => []); chatModel = ms.find((m) => /free/i.test(m)) || ms[0] || ""; localStorage.setItem("ocModel", chatModel); }
     updateModelBtn();
     loadModeEffort(); // mode (build/plan) + per-model effort menus
     allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
-    await loadChat();
+    await loadChat(); // fetches fresh state, re-renders, and updates the cache
     syncBusy(); // reflect a turn that may already be running (e.g. started from the CLI)
     startEvents(); // live updates (thinking/tool/text stream in)
     checkPendingQuestions(); // re-open a question asked before we connected
-  } catch (e) { qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
+  } catch (e) { if (!(cached && cached.length)) qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
+  finally { showSync(false); }
   refresh();
 }
 // live event stream → reload the conversation as opencode streams parts
@@ -519,6 +543,7 @@ function startEvents() {
 // mobile suspends the page (and kills the SSE) when backgrounded; on return,
 // reconnect the stream and reload so a turn that finished meanwhile shows up.
 document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { if (active) saveCache(active, lastMsgList); return; } // cache before we may be suspended
   if (document.visibilityState === "visible" && ocSid && qs("#vChat").classList.contains("show")) {
     startEvents(); loadChat().catch(() => {}); syncBusy();
   }
@@ -701,6 +726,7 @@ async function syncBusy() {
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
   lastMsgList = list;
+  if (active) saveCache(active, list); // persist on every action/event so the cache is always current
   renderMessages(list);
   recomputeBusy(); // a running tool (server/bash the agent waits on) keeps it busy
   maybeTextQuestion(list);
