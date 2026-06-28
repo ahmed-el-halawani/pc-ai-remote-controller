@@ -954,6 +954,9 @@ async function doSend(item) {
   item.atts.filter((a) => a.mime.startsWith("image/")).forEach((a) => { const im = document.createElement("img"); im.className = "att"; im.src = a.dataUrl; c.appendChild(im); });
   if (item.text) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = item.text; c.appendChild(d); }
   const think = document.createElement("div"); think.className = "thinking"; c.appendChild(think); c.scrollTop = c.scrollHeight; // holds error/stopped text
+  // optimistically make our message the last entry so isWorking() doesn't see the
+  // *previous* turn's completed reply and suppress loading until the first reload.
+  lastMsgList = lastMsgList.concat([{ info: { role: "user", id: "opt", time: { created: Date.now() } }, parts: item.text ? [{ type: "text", text: item.text }] : [] }]);
   sendAbort = new AbortController(); inFlight = true; suppressId = null; recomputeBusy();
   try {
     await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd, agent: chatAgent, variant: chatEffort[chatModel] || undefined }) });
