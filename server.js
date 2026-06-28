@@ -361,9 +361,28 @@ app.post("/oc/session", async (req, res) => {
 app.get("/oc/messages", async (req, res) => {
   try { res.json(await opencode.getMessages(req.query.sid)); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// data-URL attachments can't be read by the model — write them into the project
+// (<cwd>/.oc-uploads/) and reference by file:// path so opencode reads them.
+function materializeAttachments(parts, cwd) {
+  if (!Array.isArray(parts)) return parts;
+  const base = path.join(path.resolve(cwd || cfg.workspacesRoot), ".oc-uploads");
+  return parts.map((p) => {
+    if (!p || p.type !== "file" || typeof p.url !== "string" || !p.url.startsWith("data:")) return p;
+    const m = p.url.match(/^data:([^;,]*)(;base64)?,([\s\S]*)$/);
+    if (!m) return p;
+    const buf = m[2] ? Buffer.from(m[3], "base64") : Buffer.from(decodeURIComponent(m[3]));
+    fs.mkdirSync(base, { recursive: true });
+    const safe = (p.filename || "upload").replace(/[^\w.\-]/g, "_");
+    const abs = path.join(base, Date.now() + "-" + safe);
+    fs.writeFileSync(abs, buf);
+    return { ...p, url: "file:///" + abs.replace(/\\/g, "/") };
+  });
+}
 app.post("/oc/send", async (req, res) => {
-  try { res.json(await opencode.sendMessage(req.body.sid, req.body.model, req.body.parts)); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const parts = materializeAttachments(req.body.parts, req.body.cwd);
+    res.json(await opencode.sendMessage(req.body.sid, req.body.model, parts));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // proxy opencode-stored file parts (images/attachments) so the phone can load them
 app.get("/oc/file", async (req, res) => {

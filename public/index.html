@@ -406,7 +406,7 @@ async function sendChat() {
   chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
   qs("#chatSend").disabled = true;
   try {
-    await api("/oc/send", { method: "POST", body: JSON.stringify({ sid: ocSid, model: chatModel, parts }) });
+    await api("/oc/send", { method: "POST", body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd }) });
     await loadChat();
   } catch (e) { think.textContent = "⚠️ " + e.message; }
   qs("#chatSend").disabled = false;
