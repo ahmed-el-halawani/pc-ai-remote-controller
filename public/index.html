@@ -486,6 +486,7 @@ async function openChat(s) {
   qReq = null; answeredMsgId = null; qs("#qWrap").classList.remove("show"); // re-evaluate questions for this session
   planReq = null; resolvedPlanId = null; qs("#planWrap").classList.remove("show"); // re-evaluate plans for this session
   msgQueue = []; renderQueue(); // queued sends are per-session
+  serverBusy = false; lastMsgList = []; // reset busy state for the new session
   qs("#chatMsgs").innerHTML = "<div class='thinking'>Loading…</div>";
   pendingAtts = []; renderAtts();
   try {
@@ -511,7 +512,7 @@ function startEvents() {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     const type = (ev.payload && ev.payload.type) || ev.type || "";
     if (/question\.(v2\.)?asked/.test(type) && ev.payload && ev.payload.properties) { openQuestions(ev.payload.properties); }
-    if (/idle/.test(type)) setSending(false);
+    if (/idle/.test(type)) { serverBusy = false; recomputeBusy(); } // a running tool still keeps it busy
     if (!reloadPending) { reloadPending = true; setTimeout(() => { reloadPending = false; loadChat().catch(() => {}); }, 250); }
   };
 }
@@ -695,14 +696,13 @@ qs("#chatEffortBtn").onclick = () => {
 };
 // authoritative busy state from opencode (survives missed SSE events / backgrounding)
 async function syncBusy() {
-  try { const r = await api("/oc/status?sid=" + encodeURIComponent(ocSid)); setSending(!!r.busy); } catch {}
+  try { const r = await api("/oc/status?sid=" + encodeURIComponent(ocSid)); serverBusy = !!r.busy; recomputeBusy(); } catch {}
 }
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
+  lastMsgList = list;
   renderMessages(list);
-  // a running tool (e.g. a server/bash the agent is waiting on) means still busy —
-  // keep the stop button even if a stray idle came through.
-  if (hasRunningTool(list)) setSending(true);
+  recomputeBusy(); // a running tool (server/bash the agent waits on) keeps it busy
   maybeTextQuestion(list);
   maybePlan(list);
 }
@@ -814,6 +814,11 @@ chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!chatSending) sendChat(); }
 });
 let chatSending = false, sendAbort = null, busyPoll = null;
+// single source of truth for "busy": the session's own status OR a still-running
+// tool (a server/bash the agent is waiting on). The only thing that flips the
+// Stop button / loading bar — every caller sets its input then recomputes.
+let serverBusy = false, lastMsgList = [];
+function recomputeBusy() { setSending(serverBusy || hasRunningTool(lastMsgList)); }
 function setSending(on) {
   chatSending = on;
   const b = qs("#chatSend");
@@ -865,7 +870,7 @@ async function doSend(item) {
   item.atts.filter((a) => a.mime.startsWith("image/")).forEach((a) => { const im = document.createElement("img"); im.className = "att"; im.src = a.dataUrl; c.appendChild(im); });
   if (item.text) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = item.text; c.appendChild(d); }
   const think = document.createElement("div"); think.className = "thinking"; c.appendChild(think); c.scrollTop = c.scrollHeight; // holds error/stopped text
-  sendAbort = new AbortController(); setSending(true);
+  sendAbort = new AbortController(); serverBusy = true; recomputeBusy();
   try {
     await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd, agent: chatAgent, variant: chatEffort[chatModel] || undefined }) });
     await loadChat();
@@ -873,7 +878,7 @@ async function doSend(item) {
     if (e.name === "AbortError") { think.textContent = "⏹ stopped"; await loadChat().catch(() => {}); }
     else think.textContent = "⚠️ " + e.message;
   }
-  setSending(false); sendAbort = null;
+  serverBusy = false; recomputeBusy(); sendAbort = null; // a still-running tool keeps it busy
 }
 qs("#chatSend").onclick = () => { if (chatSending) stopChat(); else sendChat(); };
 qs("#toolLibrary").onclick = () => { if (activeSession) openAdd("skills"); }; // full sectioned sheet
