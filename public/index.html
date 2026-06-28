@@ -523,6 +523,7 @@ async function openChat(s) {
     startEvents(); // live updates (thinking/tool/text stream in)
     startStatusPoll(); // keep tracking busy/model-wait even when SSE is quiet
     checkPendingQuestions(); // re-open a question asked before we connected
+    flushQueue(); // send anything typed before ocSid was ready (never dropped)
   } catch (e) { if (!(cached && cached.length)) qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
   finally { showSync(false); }
   refresh();
@@ -537,8 +538,7 @@ function startEvents() {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     const type = (ev.payload && ev.payload.type) || ev.type || "";
     if (/question\.(v2\.)?asked/.test(type) && ev.payload && ev.payload.properties) { openQuestions(ev.payload.properties); }
-    if (/idle/.test(type)) { serverBusy = false; recomputeBusy(); } // a running tool still keeps it busy
-    else { syncBusy(); } // any other activity: refresh the real busy state immediately
+    syncBusy(); // re-check the real /session/status on any event (incl. idle) — never blind-clear
     scheduleReload();
   };
 }
@@ -740,7 +740,7 @@ function startStatusPoll() {
     if (!ocSid || !qs("#vChat").classList.contains("show")) return;
     await syncBusy();
     if (serverBusy) scheduleReload(); // pull any new parts during a quiet model-wait
-  }, 3000);
+  }, 10000);
 }
 function stopStatusPoll() { if (statusPoll) { clearInterval(statusPoll); statusPoll = null; } }
 async function loadChat() {
@@ -785,7 +785,11 @@ function toolLabel(p) {
   return st.title || tool;
 }
 function renderMessages(list) {
-  const c = qs("#chatMsgs"); c.innerHTML = "";
+  const c = qs("#chatMsgs");
+  // preserve the user's scroll: follow only if already near the bottom, else keep position
+  const nearBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 80;
+  const prevTop = c.scrollTop;
+  c.innerHTML = "";
   list.forEach((m) => {
     const role = m.info && m.info.role === "user" ? "user" : "assistant";
     (m.parts || []).forEach((p) => {
@@ -820,7 +824,7 @@ function renderMessages(list) {
     });
   });
   updateWorking(list);
-  c.scrollTop = c.scrollHeight;
+  c.scrollTop = nearBottom ? c.scrollHeight : prevTop; // don't yank a scrolled-up reader to the bottom
 }
 // persistent "AI is working" bar above the composer (always visible while busy)
 function updateWorking(list) {
@@ -901,7 +905,8 @@ function sendChat() {
   if (!t && !pendingAtts.length) return;
   const item = { text: t, atts: pendingAtts.slice() };
   chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
-  if (chatSending) { msgQueue.push(item); renderQueue(); return; } // busy -> queue it
+  // busy, or session id not wired yet (still syncing on open) -> queue so it's never dropped
+  if (chatSending || !ocSid) { msgQueue.push(item); renderQueue(); return; }
   doSend(item);
 }
 async function doSend(item) {
