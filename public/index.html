@@ -503,7 +503,7 @@ function setReviseMode(on) {
 }
 function openPlan(req) {
   planReq = req;
-  qs("#planPreview").textContent = req.text.length > 1200 ? req.text.slice(-1200) : req.text;
+  qs("#planPreview").textContent = req.text; // full plan; the box scrolls
   qs("#planRevise").value = ""; setReviseMode(false);
   qs("#planWrap").classList.add("show");
 }
