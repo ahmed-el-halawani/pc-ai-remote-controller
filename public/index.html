@@ -880,6 +880,10 @@ let serverBusy = false, lastMsgList = [], inFlight = false, suppressId = null;
 let lastSig = "", lastActivityAt = 0; // detect streaming (content changing) vs an abandoned incomplete turn
 function isWorking() {
   const last = lastMsgList[lastMsgList.length - 1];
+  // final answer delivered -> done immediately (finish "stop"/etc; only "tool-calls" means more is coming).
+  // Don't wait for the /oc/send POST to finish closing, which lingers after the visible response ends.
+  if (last && last.info && last.info.role === "assistant" && last.info.finish && last.info.finish !== "tool-calls"
+      && !hasRunningTool(lastMsgList)) return false;
   const incompleteAssistant = !!(last && last.info && last.info.role === "assistant"
     && !(last.info.time && last.info.time.completed) && last.info.id !== suppressId
     && Date.now() - lastActivityAt < 30000); // still streaming recently (not a stale/aborted turn)
@@ -918,7 +922,7 @@ function renderQueue() {
   });
 }
 function flushQueue() { // send the next queued message once the session is free
-  if (chatSending || !msgQueue.length || !ocSid) return;
+  if (chatSending || inFlight || !msgQueue.length || !ocSid) return;
   const item = msgQueue.shift(); renderQueue(); doSend(item);
 }
 function sendChat() {
@@ -926,8 +930,8 @@ function sendChat() {
   if (!t && !pendingAtts.length) return;
   const item = { text: t, atts: pendingAtts.slice() };
   chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
-  // busy, or session id not wired yet (still syncing on open) -> queue so it's never dropped
-  if (chatSending || !ocSid) { msgQueue.push(item); renderQueue(); return; }
+  // busy, a send still closing, or session id not wired yet -> queue so it's never dropped
+  if (chatSending || inFlight || !ocSid) { msgQueue.push(item); renderQueue(); return; }
   doSend(item);
 }
 async function doSend(item) {
