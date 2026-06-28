@@ -403,9 +403,36 @@ function startEvents() {
 }
 
 // ---- AI questions (single/multiple choice + custom text), paged ----
-let qReq = null, qIdx = 0, qAnswers = [];
+let qReq = null, qIdx = 0, qAnswers = [], answeredMsgId = null;
 async function checkPendingQuestions() {
   try { const list = await api("/oc/questions?sid=" + encodeURIComponent(ocSid)); if (list && list.length) openQuestions(list[0]); } catch {}
+}
+// Models that can't call the structured-question tool just TYPE the questions.
+// Parse a "...?" line followed by "- option" bullets into a synthetic request
+// (no requestID) so the same sheet appears; reply is sent as a normal message.
+function parseTextQuestions(text) {
+  const clean = (s) => s.replace(/\*\*/g, "").replace(/^[-*\d.\)\s]+/, "").trim();
+  const questions = []; let cur = null;
+  for (const raw of (text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    const b = /^[-*]\s+(.+)/.exec(line);
+    if (b && cur) { cur.options.push({ label: clean(b[1]) }); continue; }
+    const q = clean(line);
+    if (q.endsWith("?")) { cur = { question: q, header: "Question", options: [], multiple: false, custom: true }; questions.push(cur); }
+    else cur = null; // a non-bullet, non-question line breaks the current option list
+  }
+  const valid = questions.filter((q) => q.options.length >= 2);
+  return valid.length ? { synthetic: true, questions: valid } : null;
+}
+// when the assistant's *last* message is a typed question, pop the sheet
+function maybeTextQuestion(list) {
+  if (qReq || chatSending) return;
+  const last = list[list.length - 1];
+  if (!last || !(last.info && last.info.role === "assistant")) return;
+  if (last.info.id === answeredMsgId) return;
+  const text = (last.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
+  const req = parseTextQuestions(text);
+  if (req) { req.id = "txt:" + last.info.id; req.msgId = last.info.id; openQuestions(req); }
 }
 function openQuestions(req) {
   if (!req || !req.questions || !req.questions.length) return;
@@ -441,16 +468,25 @@ qs("#qNext").onclick = async () => {
   qAnswers[qIdx] = collectCurrent();
   if (qIdx < qReq.questions.length - 1) { qIdx++; renderQuestion(); return; }
   const req = qReq; qReq = null; qs("#qWrap").classList.remove("show");
+  if (req.synthetic) { // typed question: reply as a normal chat message
+    answeredMsgId = req.msgId;
+    chatInput.value = req.questions.map((q, i) => "• " + q.question + " → " + (qAnswers[i] || []).join(", ")).join("\n");
+    growChat(); sendChat();
+    return;
+  }
   try { await api("/oc/question/reply", { method: "POST", body: JSON.stringify({ requestID: req.id, answers: qAnswers }) }); } catch (e) { alert("reply failed: " + e.message); }
 };
 qs("#qCancel").onclick = async () => {
   const req = qReq; qReq = null; qs("#qWrap").classList.remove("show");
-  if (req) { try { await api("/oc/question/reject", { method: "POST", body: JSON.stringify({ requestID: req.id }) }); } catch {} }
+  if (!req) return;
+  if (req.synthetic) { answeredMsgId = req.msgId; return; } // just dismiss; don't re-pop
+  try { await api("/oc/question/reject", { method: "POST", body: JSON.stringify({ requestID: req.id }) }); } catch {}
 };
 function updateModelBtn() { qs("#chatModelBtn").textContent = (chatModel ? chatModel.split("/").pop() : "Model") + " ▾"; }
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
   renderMessages(list);
+  maybeTextQuestion(list);
 }
 function renderMessages(list) {
   const c = qs("#chatMsgs"); c.innerHTML = "";
