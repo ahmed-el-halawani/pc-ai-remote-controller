@@ -551,8 +551,7 @@ function startEvents() {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     const type = (ev.payload && ev.payload.type) || ev.type || "";
     if (/question\.(v2\.)?asked/.test(type) && ev.payload && ev.payload.properties) { openQuestions(ev.payload.properties); }
-    syncBusy(); // re-check the real /session/status on any event (incl. idle) — never blind-clear
-    scheduleReload();
+    scheduleReload(); // debounced loadChat -> recomputeBusy already updates busy from message data
   };
 }
 function scheduleReload() {
