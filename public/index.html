@@ -487,7 +487,12 @@ function saveCache(id, list) {
     try { Object.keys(localStorage).forEach((k) => { if (k.startsWith("chat:") && k !== cacheKey(id)) localStorage.removeItem(k); }); localStorage.setItem(cacheKey(id), trim(40)); } catch {}
   }
 }
-function showSync(on) { qs("#chatSync").classList.toggle("show", on); }
+let syncTimer = null;
+function showSync(on) {
+  qs("#chatSync").classList.toggle("show", on);
+  clearTimeout(syncTimer); syncTimer = null;
+  if (on) syncTimer = setTimeout(() => qs("#chatSync").classList.remove("show"), 12000); // never stick
+}
 let chatModel = localStorage.getItem("ocModel") || "";
 let chatAgent = localStorage.getItem("ocAgent") || "build"; // mode: build / plan
 let chatEffort = JSON.parse(localStorage.getItem("ocEffort") || "{}"); // model -> variant
@@ -747,8 +752,9 @@ function startStatusPoll() {
   stopStatusPoll();
   statusPoll = setInterval(async () => {
     if (!ocSid || !qs("#vChat").classList.contains("show")) return;
+    if (!isWorking()) return; // idle: no polling churn — the SSE stream wakes us on new activity
     await syncBusy();
-    if (isWorking()) scheduleReload(); // pull any new parts during a quiet model-wait / CLI turn
+    scheduleReload(); // pull any new parts during a quiet model-wait / CLI turn
   }, 5000);
 }
 function stopStatusPoll() { if (statusPoll) { clearInterval(statusPoll); statusPoll = null; } }
