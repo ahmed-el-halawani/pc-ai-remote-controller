@@ -207,6 +207,7 @@ let term, fit, ws;      // xterm + websocket for active session
 function showView(id) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("show", v.id === id));
   if (id === "screen") startScreen(); else stopScreen();
+  if (id !== "vChat") { hideAC(); stopEvents(); }
 }
 document.querySelectorAll("[data-view]").forEach((b) => b.onclick = () => showView(b.dataset.view));
 
@@ -350,8 +351,22 @@ async function openChat(s) {
     updateModelBtn();
     allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
     await loadChat();
+    startEvents(); // live updates (thinking/tool/text stream in)
   } catch (e) { qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
   refresh();
+}
+// live event stream → reload the conversation as opencode streams parts
+let evtSrc = null, reloadPending = false;
+function stopEvents() { if (evtSrc) { evtSrc.close(); evtSrc = null; } }
+function startEvents() {
+  stopEvents();
+  evtSrc = new EventSource("/oc/events?sid=" + encodeURIComponent(ocSid) + "&token=" + encodeURIComponent(TOKEN));
+  evtSrc.onmessage = (e) => {
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    const type = (ev.payload && ev.payload.type) || ev.type || "";
+    if (/idle/.test(type)) setSending(false);
+    if (!reloadPending) { reloadPending = true; setTimeout(() => { reloadPending = false; loadChat().catch(() => {}); }, 250); }
+  };
 }
 function updateModelBtn() { qs("#chatModelBtn").textContent = (chatModel ? chatModel.split("/").pop() : "Model") + " ▾"; }
 async function loadChat() {
@@ -379,6 +394,7 @@ function renderMessages(list) {
       }
     });
   });
+  if (chatSending) { const d = document.createElement("div"); d.className = "thinking"; d.textContent = "opencode is working…"; c.appendChild(d); }
   c.scrollTop = c.scrollHeight;
 }
 function renderAtts() {

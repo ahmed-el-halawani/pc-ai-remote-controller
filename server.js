@@ -364,6 +364,37 @@ app.get("/oc/messages", async (req, res) => {
 app.post("/oc/abort", async (req, res) => {
   try { res.json({ ok: await opencode.abort(req.body.sid) }); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// live updates: proxy opencode's /global/event SSE, filtered to one session
+app.get("/oc/events", async (req, res) => {
+  const sid = req.query.sid || "";
+  res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write(": connected\n\n");
+  const ka = setInterval(() => res.write(": ka\n\n"), 15000); // keep-alive
+  const ac = new AbortController();
+  let closed = false;
+  req.on("close", () => { closed = true; clearInterval(ka); ac.abort(); });
+  try {
+    await opencode.start();
+    const up = await fetch(opencode.BASE + "/global/event", { signal: ac.signal });
+    const reader = up.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (!closed) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        const dl = chunk.split("\n").find((l) => l.startsWith("data:"));
+        if (!dl) continue;
+        const json = dl.slice(5).trim();
+        if (!sid || json.includes(sid)) res.write("data: " + json + "\n\n"); // only this session's events
+      }
+    }
+  } catch {}
+  clearInterval(ka);
+  res.end();
+});
 // data-URL attachments can't be read by the model — write them into the project
 // (<cwd>/.oc-uploads/) and reference by file:// path so opencode reads them.
 function materializeAttachments(parts, cwd) {
