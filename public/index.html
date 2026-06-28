@@ -374,6 +374,7 @@ async function openChat(s) {
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
   showView("vChat");
   hideAC(); acCtxDir = null;
+  qReq = null; answeredMsgId = null; qs("#qWrap").classList.remove("show"); // re-evaluate questions for this session
   qs("#chatMsgs").innerHTML = "<div class='thinking'>Loading…</div>";
   pendingAtts = []; renderAtts();
   try {
