@@ -107,9 +107,7 @@
   #qNext { background: #fb6a3c; color: #fff; border: none; border-radius: 12px; padding: 11px 20px; font-size: 14px; font-weight: 600; }
   #qCancel { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
   .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
-  .composer-meta { display: flex; align-items: center; gap: 14px; padding: 7px 2px 3px; margin-top: 5px; border-top: 1px solid #21262d; }
-  .composer-meta:empty { display: none; }
-  .metatrig { background: transparent; border: none; padding: 2px 0; color: #adbac7; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
+  .metatrig { background: transparent; border: none; padding: 2px 0; color: #adbac7; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; flex: none; }
   .metatrig:active { color: #fff; }
   .metatrig .cv { width: 11px; height: 11px; opacity: .7; }
   .composer-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
@@ -163,12 +161,10 @@
       <div class="composer">
         <div id="chatAtts"></div>
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
-        <div class="composer-meta">
+        <div class="composer-actions">
           <button class="metatrig" id="chatModeBtn" title="Mode"><span class="lbl">Build</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button class="metatrig" id="chatModelBtn" title="Model"><span class="lbl">Model</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button class="metatrig" id="chatEffortBtn" title="Reasoning effort" style="display:none"><span class="lbl">Effort</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
-        </div>
-        <div class="composer-actions">
           <button class="tool" id="toolLibrary" style="display:none"><span class="ico">☰</span> Library</button>
           <button class="tool" id="toolContext" style="display:none"><span class="ico">☰</span> Context</button>
           <span style="flex:1"></span>
