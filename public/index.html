@@ -70,9 +70,28 @@
   /* opencode chat view (Claude-mobile style) */
   #chatTop { display: flex; gap: 8px; align-items: center; padding: 8px; background: #161b22; border-bottom: 1px solid #30363d; }
   #chatTop button { background: #21262d; border: 1px solid #30363d; border-radius: 16px; padding: 6px 12px; font-size: 13px; color: #c9d1d9; white-space: nowrap; }
-  #chatMsgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  #chatMsgs { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 85%; padding: 10px 13px; border-radius: 16px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+  .msg.markdown { max-width: 100%; white-space: normal; } /* responses fill the column */
   .msg.user { align-self: flex-end; background: #1f6feb; color: #fff; border-bottom-right-radius: 5px; }
+  /* markdown content (responses + plan preview) — fills width, only vertical scroll */
+  .markdown, .planprev { overflow-wrap: anywhere; }
+  .markdown > :first-child, .planprev > :first-child { margin-top: 0; }
+  .markdown > :last-child, .planprev > :last-child { margin-bottom: 0; }
+  .markdown h1, .planprev h1 { font-size: 19px; } .markdown h2, .planprev h2 { font-size: 17px; } .markdown h3, .planprev h3 { font-size: 15px; }
+  .markdown h1, .markdown h2, .markdown h3, .markdown h4, .planprev h1, .planprev h2, .planprev h3, .planprev h4 { margin: 14px 0 6px; line-height: 1.3; }
+  .markdown p, .planprev p { margin: 7px 0; }
+  .markdown ul, .markdown ol, .planprev ul, .planprev ol { margin: 6px 0; padding-left: 22px; }
+  .markdown li, .planprev li { margin: 3px 0; }
+  .markdown a, .planprev a { color: #58a6ff; }
+  .markdown code, .planprev code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9em; background: #21262d; padding: 1px 5px; border-radius: 5px; }
+  .markdown pre, .planprev pre { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
+  .markdown pre code, .planprev pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.45; }
+  .markdown blockquote, .planprev blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid #30363d; color: #8b949e; }
+  .markdown table, .planprev table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 8px 0; }
+  .markdown th, .markdown td, .planprev th, .planprev td { border: 1px solid #30363d; padding: 5px 9px; }
+  .markdown img, .planprev img { max-width: 100%; height: auto; border-radius: 8px; }
+  .markdown hr, .planprev hr { border: none; border-top: 1px solid #30363d; margin: 12px 0; }
   .msg.assistant { align-self: flex-start; background: #161b22; border: 1px solid #30363d; border-bottom-left-radius: 5px; }
   .toolcard { align-self: flex-start; max-width: 88%; font-size: 12px; color: #adbac7; background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 7px 11px; }
   .reason { align-self: flex-start; max-width: 88%; font-size: 12px; color: #6e7681; }
@@ -97,7 +116,7 @@
   #qWrap, #planWrap { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 100; align-items: flex-end; }
   #qWrap.show, #planWrap.show { display: flex; }
   #qSheet, #planSheet { width: 100%; max-height: 82vh; overflow-y: auto; background: #161b22; border-top: 1px solid #30363d; border-radius: 20px 20px 0 0; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 -10px 30px rgba(0,0,0,.5); }
-  .planprev { font-size: 14px; line-height: 1.5; white-space: pre-wrap; max-height: 46vh; overflow-y: auto; color: #c9d1d9; background: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 12px; }
+  .planprev { font-size: 14px; line-height: 1.5; max-height: 46vh; overflow-y: auto; overflow-x: hidden; color: #c9d1d9; background: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 12px; }
   #planRevise { background: #0d1117; border: 1px solid #30363d; border-radius: 12px; color: #c9d1d9; font: inherit; padding: 10px; resize: vertical; min-height: 70px; }
   #planRevise2 { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
   #planReject { background: #2d1518; color: #f85149; border: 1px solid #da3633; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
@@ -258,6 +277,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script>
 const TOKEN = new URLSearchParams(location.search).get("token") || localStorage.getItem("token") || "";
 if (TOKEN) localStorage.setItem("token", TOKEN);
@@ -270,6 +291,16 @@ const api = async (p, opt = {}) => {
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
   return r.ctHeaderJson === false ? r : r.json();
 };
+
+// markdown -> sanitized HTML (model/user output is untrusted; never raw innerHTML)
+if (window.DOMPurify) DOMPurify.addHook("afterSanitizeAttributes", (n) => {
+  if (n.tagName === "A") { n.setAttribute("target", "_blank"); n.setAttribute("rel", "noopener noreferrer"); }
+});
+function md(text) {
+  text = text || "";
+  if (window.marked && window.DOMPurify) { try { return DOMPurify.sanitize(marked.parse(text, { breaks: true })); } catch {} }
+  const d = document.createElement("div"); d.textContent = text; return d.innerHTML; // fallback: escaped plain text
+}
 
 // dismiss any dialog (bottom sheet) when pressing outside its box
 document.querySelectorAll("dialog").forEach((d) => {
@@ -503,7 +534,7 @@ function setReviseMode(on) {
 }
 function openPlan(req) {
   planReq = req;
-  qs("#planPreview").textContent = req.text; // full plan; the box scrolls
+  qs("#planPreview").innerHTML = md(req.text); // full plan as markdown; the box scrolls
   qs("#planRevise").value = ""; setReviseMode(false);
   qs("#planWrap").classList.add("show");
 }
@@ -686,7 +717,10 @@ function renderMessages(list) {
     const role = m.info && m.info.role === "user" ? "user" : "assistant";
     (m.parts || []).forEach((p) => {
       if (p.type === "text" && p.text && p.text.trim()) {
-        const d = document.createElement("div"); d.className = "msg " + role; d.textContent = p.text; c.appendChild(d);
+        const d = document.createElement("div"); d.className = "msg " + role;
+        if (role === "assistant") { d.classList.add("markdown"); d.innerHTML = md(p.text); } // render responses as markdown
+        else d.textContent = p.text; // user bubbles stay literal
+        c.appendChild(d);
       } else if (p.type === "reasoning" && p.text && p.text.trim()) {
         const d = document.createElement("details"); d.className = "reason"; d.open = true; // always expanded
         const sm = document.createElement("summary"); sm.innerHTML = ICON.brain + "<span>Thinking</span>";
