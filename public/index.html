@@ -73,9 +73,12 @@
   .reason { align-self: flex-start; max-width: 88%; font-size: 12px; color: #6e7681; }
   .reason summary { cursor: pointer; list-style: none; }
   .reason summary::-webkit-details-marker { display: none; }
-  .reason summary::before { content: "▸ "; }
-  .reason[open] summary::before { content: "▾ "; }
+  .reason summary { display: flex; align-items: center; gap: 6px; color: #8b949e; }
   .reason .reasontext { font-style: italic; white-space: pre-wrap; margin-top: 4px; }
+  .ic { width: 15px; height: 15px; flex: none; vertical-align: -2px; }
+  .toolcard { display: flex; align-items: center; gap: 7px; }
+  .toolcard .ic { color: #58a6ff; }
+  .toolcard span { word-break: break-all; }
   .thinking { align-self: flex-start; color: #8b949e; font-size: 13px; }
   .att { align-self: flex-end; max-width: 60%; border-radius: 12px; border: 1px solid #30363d; }
   #chatBar { position: relative; padding: 8px; background: #161b22; border-top: 1px solid #30363d; }
@@ -144,6 +147,8 @@
   <div class="view" id="vChat">
     <div id="chatTop">
       <button id="chatModelBtn">Model ▾</button>
+      <button id="chatModeBtn" title="Mode">Build ▾</button>
+      <button id="chatEffortBtn" title="Reasoning effort" style="display:none">Effort ▾</button>
       <span style="flex:1"></span>
       <button id="chatSessions" title="Switch session">☰</button>
       <button id="chatNewSame" title="New session, same workspace">⧉</button>
@@ -369,6 +374,10 @@ function buildOptbar(s) {
 // ---- opencode chat GUI ----
 let ocSid = null;
 let chatModel = localStorage.getItem("ocModel") || "";
+let chatAgent = localStorage.getItem("ocAgent") || "build"; // mode: build / plan
+let chatEffort = JSON.parse(localStorage.getItem("ocEffort") || "{}"); // model -> variant
+let providers = {}; // "provider/model" -> { variants:[], reasoning }
+let agentList = ["build", "plan"];
 let pendingAtts = []; // {filename, mime, dataUrl}
 
 async function ensureOcSession(s) {
@@ -388,6 +397,7 @@ async function openChat(s) {
     ocSid = await ensureOcSession(s);
     if (!chatModel) { const ms = await api("/oc/models").catch(() => []); chatModel = ms.find((m) => /free/i.test(m)) || ms[0] || ""; localStorage.setItem("ocModel", chatModel); }
     updateModelBtn();
+    loadModeEffort(); // mode (build/plan) + per-model effort menus
     allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
     await loadChat();
     startEvents(); // live updates (thinking/tool/text stream in)
@@ -507,11 +517,59 @@ qs("#qCancel").onclick = async () => {
   if (req.synthetic) { answeredMsgId = req.msgId; return; } // just dismiss; don't re-pop
   try { await api("/oc/question/reject", { method: "POST", body: JSON.stringify({ requestID: req.id }) }); } catch {}
 };
-function updateModelBtn() { qs("#chatModelBtn").textContent = (chatModel ? chatModel.split("/").pop() : "Model") + " ▾"; }
+function updateModelBtn() { qs("#chatModelBtn").textContent = (chatModel ? chatModel.split("/").pop() : "Model") + " ▾"; updateEffortBtn(); }
+// reasoning effort: only shown when the current model has variants
+function updateEffortBtn() {
+  const b = qs("#chatEffortBtn"); const vs = (providers[chatModel] || {}).variants || [];
+  if (!vs.length) { b.style.display = "none"; return; }
+  b.style.display = ""; const cur = chatEffort[chatModel] || ""; b.textContent = (cur || "Effort") + " ▾";
+}
+function updateModeBtn() { qs("#chatModeBtn").textContent = chatAgent.charAt(0).toUpperCase() + chatAgent.slice(1) + " ▾"; }
+async function loadModeEffort() {
+  updateModeBtn();
+  try { providers = await api("/oc/providers"); } catch { providers = {}; }
+  try { const a = await api("/oc/agents"); if (a && a.length) agentList = a; } catch {}
+  updateEffortBtn();
+}
+qs("#chatModeBtn").onclick = () => openMenu("Mode", agentList.map((a) => ({ label: a })),
+  (it) => { chatAgent = it.label; localStorage.setItem("ocAgent", chatAgent); updateModeBtn(); });
+qs("#chatEffortBtn").onclick = () => {
+  const vs = (providers[chatModel] || {}).variants || [];
+  openMenu("Effort", vs.map((v) => ({ label: v })),
+    (it) => { chatEffort[chatModel] = it.label; localStorage.setItem("ocEffort", JSON.stringify(chatEffort)); updateEffortBtn(); });
+};
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
   renderMessages(list);
   maybeTextQuestion(list);
+}
+// lucide/Linear-style stroke icons (inline so no icon dependency)
+const SVG = (p) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const ICON = {
+  brain: SVG('<path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.04Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.04Z"/>'),
+  read: SVG('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/>'),
+  edit: SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+  write: SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+  bash: SVG('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
+  grep: SVG('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
+  glob: SVG('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
+  list: SVG('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'),
+  webfetch: SVG('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/>'),
+  todowrite: SVG('<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
+  question: SVG('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
+  tool: SVG('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-2.5Z"/>'),
+  alert: SVG('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
+};
+// concise tool label; for read with a line range show "name.ext:start-end"
+function toolLabel(p) {
+  const st = p.state || {}, inp = st.input || {}, tool = p.tool || "tool";
+  if (tool === "read" && inp.filePath) {
+    const base = String(inp.filePath).split(/[\\/]/).pop();
+    if (inp.offset != null) { const s = inp.offset + 1; const e = inp.limit ? s + inp.limit - 1 : ""; return `read ${base}:${s}${e ? "-" + e : "+"}`; }
+    return `read ${base}`;
+  }
+  if ((tool === "edit" || tool === "write") && inp.filePath) return `${tool} ${String(inp.filePath).split(/[\\/]/).pop()}`;
+  return st.title || tool;
 }
 function renderMessages(list) {
   const c = qs("#chatMsgs"); c.innerHTML = "";
@@ -521,14 +579,14 @@ function renderMessages(list) {
       if (p.type === "text" && p.text && p.text.trim()) {
         const d = document.createElement("div"); d.className = "msg " + role; d.textContent = p.text; c.appendChild(d);
       } else if (p.type === "reasoning" && p.text && p.text.trim()) {
-        const d = document.createElement("details"); d.className = "reason";
-        const sm = document.createElement("summary"); sm.textContent = "💭 thinking";
+        const d = document.createElement("details"); d.className = "reason"; d.open = true; // always expanded
+        const sm = document.createElement("summary"); sm.innerHTML = ICON.brain + "<span>Thinking</span>";
         const tx = document.createElement("div"); tx.className = "reasontext"; tx.textContent = p.text.trim();
         d.append(sm, tx); c.appendChild(d);
       } else if (p.type === "tool") {
-        const st = p.state || {}; const label = st.title || p.tool || "tool";
         const d = document.createElement("div"); d.className = "toolcard";
-        d.textContent = (st.status === "error" ? "⚠️ " : "🔧 ") + label; c.appendChild(d);
+        d.innerHTML = (p.state && p.state.status === "error" ? ICON.alert : (ICON[p.tool] || ICON.tool)) + "<span>" + toolLabel(p) + "</span>";
+        c.appendChild(d);
       } else if (p.type === "file" && p.mime && p.mime.startsWith("image/") && p.url) {
         const img = document.createElement("img"); img.className = "att"; img.src = "/oc/file?url=" + encodeURIComponent(p.url) + "&token=" + encodeURIComponent(TOKEN); c.appendChild(img);
       }
@@ -581,7 +639,7 @@ async function sendChat() {
   chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
   sendAbort = new AbortController(); setSending(true);
   try {
-    await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd }) });
+    await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd, agent: chatAgent, variant: chatEffort[chatModel] || undefined }) });
     await loadChat();
   } catch (e) {
     if (e.name === "AbortError") { think.textContent = "⏹ stopped"; await loadChat().catch(() => {}); }

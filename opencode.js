@@ -55,14 +55,18 @@ const createSession = (dir, title) =>
 
 const getMessages = (sid) => ocJson(`/session/${sid}/message`);
 const getConfig = () => ocJson(`/config`); // { mcp, plugin, agent, command, ... }
+const getProviders = () => ocJson(`/config/providers`); // { providers:[{id,models:{id:{variants,capabilities}}}], default }
+const getAgents = () => ocJson(`/agent`); // [{name, mode:"primary"|"subagent", ...}]
 const abort = (sid) => oc(`/session/${sid}/abort`, { method: "POST" }).then(() => true).catch(() => false);
 
-function sendMessage(sid, model, parts) {
+function sendMessage(sid, model, parts, opts = {}) {
   const body = { parts };
   if (model && model.includes("/")) {
     const i = model.indexOf("/");
     body.model = { providerID: model.slice(0, i), modelID: model.slice(i + 1) };
   }
+  if (opts.variant) body.variant = opts.variant; // reasoning effort (low/medium/high/…)
+  if (opts.agent) body.agent = opts.agent;       // mode: build / plan
   return ocJson(`/session/${sid}/message`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
@@ -71,4 +75,4 @@ function sendMessage(sid, model, parts) {
 // proxy a binary file part (image/attachment) the opencode server stored
 const fileUrl = (sid, partUrl) => BASE + partUrl; // opencode part.url is a server-relative path
 
-module.exports = { start, listModels, createSession, getMessages, getConfig, sendMessage, abort, BASE, ocJson };
+module.exports = { start, listModels, createSession, getMessages, getConfig, getProviders, getAgents, sendMessage, abort, BASE, ocJson };

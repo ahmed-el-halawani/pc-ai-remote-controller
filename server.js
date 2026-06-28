@@ -156,7 +156,7 @@ function tokenOk(req) {
 }
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.use((req, res, next) => {
-  if (req.path === "/" || req.path.startsWith("/static") || req.path === "/manifest.webmanifest" || req.path === "/sw.js") return next();
+  if (req.path === "/" || req.path === "/snake" || req.path.startsWith("/static") || req.path === "/manifest.webmanifest" || req.path === "/sw.js") return next();
   if (!tokenOk(req)) return res.status(401).json({ error: "bad token" });
   next();
 });
@@ -350,6 +350,24 @@ const opencode = require("./opencode");
 app.get("/oc/models", async (_req, res) => {
   try { res.json(await opencode.listModels()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// model variants (reasoning effort) keyed by "provider/model"
+app.get("/oc/providers", async (_req, res) => {
+  try {
+    const d = await opencode.getProviders();
+    const out = {};
+    for (const pr of d.providers || []) for (const [mid, m] of Object.entries(pr.models || {}))
+      out[`${pr.id}/${mid}`] = { variants: Object.keys(m.variants || {}), reasoning: !!(m.capabilities && m.capabilities.reasoning) };
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// primary agents = switchable modes (build / plan)
+app.get("/oc/agents", async (_req, res) => {
+  try {
+    const list = await opencode.getAgents();
+    const skip = new Set(["compaction", "summary", "title"]); // internal agents
+    res.json(list.filter((a) => a.mode === "primary" && !skip.has(a.name)).map((a) => a.name));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post("/oc/session", async (req, res) => {
   try {
     const s = sessions.get(req.body.session);
@@ -432,7 +450,7 @@ function materializeAttachments(parts, cwd) {
 app.post("/oc/send", async (req, res) => {
   try {
     const parts = materializeAttachments(req.body.parts, req.body.cwd);
-    res.json(await opencode.sendMessage(req.body.sid, req.body.model, parts));
+    res.json(await opencode.sendMessage(req.body.sid, req.body.model, parts, { variant: req.body.variant, agent: req.body.agent }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // proxy opencode-stored file parts (images/attachments) so the phone can load them
@@ -449,6 +467,7 @@ app.get("/oc/file", async (req, res) => {
 // rustdesk launch info for the UI button
 app.get("/rustdesk", (_req, res) => res.json({ id: cfg.rustdeskId || "" }));
 
+app.get("/snake", (_req, res) => res.sendFile(path.join(__dirname, "controller", "snake", "index.html")));
 app.use("/static", express.static(path.join(__dirname, "public")));
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/manifest.webmanifest", (_req, res) => res.sendFile(path.join(__dirname, "public", "manifest.webmanifest")));
