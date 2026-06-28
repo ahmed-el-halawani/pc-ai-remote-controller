@@ -98,8 +98,8 @@
   #qWrap.show, #planWrap.show { display: flex; }
   #qSheet, #planSheet { width: 100%; max-height: 82vh; overflow-y: auto; background: #161b22; border-top: 1px solid #30363d; border-radius: 20px 20px 0 0; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 -10px 30px rgba(0,0,0,.5); }
   .planprev { font-size: 14px; line-height: 1.5; white-space: pre-wrap; max-height: 46vh; overflow-y: auto; color: #c9d1d9; background: #0d1117; border: 1px solid #30363d; border-radius: 12px; padding: 12px; }
-  #planRevise { background: #0d1117; border: 1px solid #30363d; border-radius: 12px; color: #c9d1d9; font: inherit; padding: 10px; resize: vertical; min-height: 70px; }
-  #planReject, #planRevise2 { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
+  #planRevise2 { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
+  #planReject { background: #2d1518; color: #f85149; border: 1px solid #da3633; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
   #planAccept { background: #238636; color: #fff; border: 1px solid #2ea043; border-radius: 12px; padding: 11px 18px; font-size: 14px; font-weight: 600; }
   /* "AI is working" animated indicator */
   .working { align-self: flex-start; display: flex; align-items: center; gap: 8px; color: #8b949e; font-size: 13px; }
@@ -211,7 +211,6 @@
   <div id="planSheet">
     <div class="qhead"><span class="qh">Plan</span></div>
     <div id="planPreview" class="planprev"></div>
-    <textarea id="planRevise" placeholder="Add a requirement or change…" style="display:none"></textarea>
     <div class="qactions">
       <button id="planReject">Reject</button>
       <button id="planRevise2">Revise</button>
@@ -495,7 +494,6 @@ function maybePlan(list) {
 function openPlan(req) {
   planReq = req;
   qs("#planPreview").textContent = req.text.length > 1200 ? req.text.slice(-1200) : req.text;
-  const ta = qs("#planRevise"); ta.style.display = "none"; ta.value = "";
   qs("#planWrap").classList.add("show");
 }
 function closePlan() { planReq = null; qs("#planWrap").classList.remove("show"); }
@@ -505,14 +503,14 @@ qs("#planAccept").onclick = () => {
   chatInput.value = "Proceed with the plan and implement it."; growChat(); sendChat();
 };
 qs("#planRevise2").onclick = () => {
-  const ta = qs("#planRevise");
-  if (ta.style.display === "none") { ta.style.display = ""; ta.focus(); return; } // first tap reveals the field
-  const txt = ta.value.trim(); if (!txt) { ta.focus(); return; }
+  if (!planReq) return;
   resolvedPlanId = planReq.id; closePlan();
-  chatInput.value = txt; growChat(); sendChat();
+  // seed the composer with a refine prompt; user appends details and sends
+  chatInput.value = "Let's keep thinking about the plan before implementing — here's more information to consider: ";
+  growChat(); chatInput.focus();
+  const n = chatInput.value.length; chatInput.setSelectionRange(n, n);
 };
-qs("#planReject").onclick = () => { if (planReq) resolvedPlanId = planReq.id; closePlan(); }; // dismiss, don't re-pop
-qs("#planWrap").addEventListener("click", (e) => { if (e.target === qs("#planWrap")) qs("#planReject").onclick(); }); // outside tap = dismiss
+qs("#planReject").onclick = () => { if (planReq) resolvedPlanId = planReq.id; closePlan(); }; // explicit reject, don't re-pop
 
 // ---- AI questions (single/multiple choice + custom text), paged ----
 let qReq = null, qIdx = 0, qAnswers = [], answeredMsgId = null;
