@@ -360,6 +360,14 @@ app.get("/oc/providers", async (_req, res) => {
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// authoritative busy signal: /session/status maps only active sessions to a status
+app.get("/oc/status", async (req, res) => {
+  try {
+    const map = await opencode.ocJson("/session/status");
+    const st = map[req.query.sid];
+    res.json({ busy: !!(st && st.type && st.type !== "idle") });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // primary agents = switchable modes (build / plan)
 app.get("/oc/agents", async (_req, res) => {
   try {

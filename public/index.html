@@ -107,6 +107,11 @@
   #qNext { background: #fb6a3c; color: #fff; border: none; border-radius: 12px; padding: 11px 20px; font-size: 14px; font-weight: 600; }
   #qCancel { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
   .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .composer-meta { display: flex; align-items: center; gap: 14px; padding: 7px 2px 3px; margin-top: 5px; border-top: 1px solid #21262d; }
+  .composer-meta:empty { display: none; }
+  .metatrig { background: transparent; border: none; padding: 2px 0; color: #adbac7; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
+  .metatrig:active { color: #fff; }
+  .metatrig .cv { width: 11px; height: 11px; opacity: .7; }
   .composer-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
   #chatInput { width: 100%; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 4px 2px; resize: none; max-height: 30vh; }
   #chatInput:focus { outline: none; }
@@ -146,9 +151,7 @@
   <div class="view" id="screen"><img id="shot" alt="screen" /></div>
   <div class="view" id="vChat">
     <div id="chatTop">
-      <button id="chatModelBtn">Model ▾</button>
       <button id="chatModeBtn" title="Mode">Build ▾</button>
-      <button id="chatEffortBtn" title="Reasoning effort" style="display:none">Effort ▾</button>
       <span style="flex:1"></span>
       <button id="chatSessions" title="Switch session">☰</button>
       <button id="chatNewSame" title="New session, same workspace">⧉</button>
@@ -161,6 +164,10 @@
       <div class="composer">
         <div id="chatAtts"></div>
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
+        <div class="composer-meta">
+          <button class="metatrig" id="chatModelBtn" title="Model"><span class="lbl">Model</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button class="metatrig" id="chatEffortBtn" title="Reasoning effort" style="display:none"><span class="lbl">Effort</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+        </div>
         <div class="composer-actions">
           <button class="tool" id="toolLibrary"><span class="ico">☰</span> Library</button>
           <button class="tool" id="toolContext"><span class="ico">☰</span> Context</button>
@@ -400,6 +407,7 @@ async function openChat(s) {
     loadModeEffort(); // mode (build/plan) + per-model effort menus
     allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
     await loadChat();
+    syncBusy(); // reflect a turn that may already be running (e.g. started from the CLI)
     startEvents(); // live updates (thinking/tool/text stream in)
     checkPendingQuestions(); // re-open a question asked before we connected
   } catch (e) { qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
@@ -423,7 +431,7 @@ function startEvents() {
 // reconnect the stream and reload so a turn that finished meanwhile shows up.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && ocSid && qs("#vChat").classList.contains("show")) {
-    startEvents(); loadChat().catch(() => {});
+    startEvents(); loadChat().catch(() => {}); syncBusy();
   }
 });
 
@@ -524,12 +532,12 @@ qs("#qCancel").onclick = async () => {
   if (req.synthetic) { answeredMsgId = req.msgId; return; } // just dismiss; don't re-pop
   try { await api("/oc/question/reject", { method: "POST", body: JSON.stringify({ requestID: req.id }) }); } catch {}
 };
-function updateModelBtn() { qs("#chatModelBtn").textContent = (chatModel ? chatModel.split("/").pop() : "Model") + " ▾"; updateEffortBtn(); }
+function updateModelBtn() { qs("#chatModelBtn").querySelector(".lbl").textContent = chatModel ? chatModel.split("/").pop() : "Model"; updateEffortBtn(); }
 // reasoning effort: only shown when the current model has variants
 function updateEffortBtn() {
   const b = qs("#chatEffortBtn"); const vs = (providers[chatModel] || {}).variants || [];
   if (!vs.length) { b.style.display = "none"; return; }
-  b.style.display = ""; const cur = chatEffort[chatModel] || ""; b.textContent = (cur || "Effort") + " ▾";
+  b.style.display = ""; b.querySelector(".lbl").textContent = chatEffort[chatModel] || "Effort";
 }
 function updateModeBtn() { qs("#chatModeBtn").textContent = chatAgent.charAt(0).toUpperCase() + chatAgent.slice(1) + " ▾"; }
 async function loadModeEffort() {
@@ -545,17 +553,12 @@ qs("#chatEffortBtn").onclick = () => {
   openMenu("Effort", vs.map((v) => ({ label: v })),
     (it) => { chatEffort[chatModel] = it.label; localStorage.setItem("ocEffort", JSON.stringify(chatEffort)); updateEffortBtn(); });
 };
-// generation is ongoing if the last message is an assistant turn without a
-// completion timestamp (or a user message still awaiting its reply).
-function isGenerating(list) {
-  const last = list[list.length - 1]; if (!last) return false;
-  const info = last.info || {};
-  if (info.role === "assistant") return !(info.time && info.time.completed);
-  return true; // last is the user's just-sent message, reply not produced yet
+// authoritative busy state from opencode (survives missed SSE events / backgrounding)
+async function syncBusy() {
+  try { const r = await api("/oc/status?sid=" + encodeURIComponent(ocSid)); setSending(!!r.busy); } catch {}
 }
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
-  setSending(isGenerating(list)); // reflect server truth (fixes stuck spinner after backgrounding)
   renderMessages(list);
   maybeTextQuestion(list);
 }
@@ -629,13 +632,16 @@ chatInput.addEventListener("keydown", (e) => {
   if (acKeydown(e)) return;
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!chatSending) sendChat(); }
 });
-let chatSending = false, sendAbort = null;
+let chatSending = false, sendAbort = null, busyPoll = null;
 function setSending(on) {
   chatSending = on;
   const b = qs("#chatSend");
   b.classList.toggle("stop", on);
   b.textContent = on ? "■" : "↑";
   b.title = on ? "Stop" : "Send";
+  // while sending, backstop a missed idle event: poll opencode's real status
+  clearInterval(busyPoll); busyPoll = null;
+  if (on) busyPoll = setInterval(() => { if (ocSid) syncBusy(); else { clearInterval(busyPoll); busyPoll = null; } }, 5000);
 }
 function stopChat() {
   if (sendAbort) sendAbort.abort();
