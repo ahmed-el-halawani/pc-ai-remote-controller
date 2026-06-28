@@ -419,6 +419,13 @@ function startEvents() {
     if (!reloadPending) { reloadPending = true; setTimeout(() => { reloadPending = false; loadChat().catch(() => {}); }, 250); }
   };
 }
+// mobile suspends the page (and kills the SSE) when backgrounded; on return,
+// reconnect the stream and reload so a turn that finished meanwhile shows up.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && ocSid && qs("#vChat").classList.contains("show")) {
+    startEvents(); loadChat().catch(() => {});
+  }
+});
 
 // ---- AI questions (single/multiple choice + custom text), paged ----
 let qReq = null, qIdx = 0, qAnswers = [], answeredMsgId = null;
@@ -538,8 +545,17 @@ qs("#chatEffortBtn").onclick = () => {
   openMenu("Effort", vs.map((v) => ({ label: v })),
     (it) => { chatEffort[chatModel] = it.label; localStorage.setItem("ocEffort", JSON.stringify(chatEffort)); updateEffortBtn(); });
 };
+// generation is ongoing if the last message is an assistant turn without a
+// completion timestamp (or a user message still awaiting its reply).
+function isGenerating(list) {
+  const last = list[list.length - 1]; if (!last) return false;
+  const info = last.info || {};
+  if (info.role === "assistant") return !(info.time && info.time.completed);
+  return true; // last is the user's just-sent message, reply not produced yet
+}
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
+  setSending(isGenerating(list)); // reflect server truth (fixes stuck spinner after backgrounding)
   renderMessages(list);
   maybeTextQuestion(list);
 }
