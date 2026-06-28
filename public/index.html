@@ -123,6 +123,8 @@
   #planAccept { background: #238636; color: #fff; border: 1px solid #2ea043; border-radius: 12px; padding: 11px 18px; font-size: 14px; font-weight: 600; }
   /* "AI is working" animated indicator */
   .working { align-self: flex-start; display: flex; align-items: center; gap: 8px; color: #8b949e; font-size: 13px; }
+  #chatWorking { display: none; padding: 2px 6px 8px; }
+  #chatWorking.show { display: flex; }
   .working .dots { display: inline-flex; gap: 4px; }
   .working .dots i { width: 6px; height: 6px; border-radius: 50%; background: #58a6ff; animation: workdot 1s infinite ease-in-out; }
   .working .dots i:nth-child(2) { animation-delay: .15s; }
@@ -194,6 +196,7 @@
     <div id="chatMsgs"></div>
     <div id="chatBar">
       <div id="acPop" class="acpop"></div>
+      <div id="chatWorking" class="working"></div>
       <div class="composer">
         <div id="chatAtts"></div>
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
@@ -735,12 +738,15 @@ function renderMessages(list) {
       }
     });
   });
-  if (chatSending) {
-    const d = document.createElement("div"); d.className = "working";
-    d.innerHTML = `<span class="dots"><i></i><i></i><i></i></span><span>${workingLabel(list)}</span>`;
-    c.appendChild(d);
-  }
+  updateWorking(list);
   c.scrollTop = c.scrollHeight;
+}
+// persistent "AI is working" bar above the composer (always visible while busy)
+function updateWorking(list) {
+  const w = qs("#chatWorking");
+  if (!chatSending) { w.classList.remove("show"); w.innerHTML = ""; return; }
+  w.innerHTML = `<span class="dots"><i></i><i></i><i></i></span><span>${workingLabel(list || [])}</span>`;
+  w.classList.add("show");
 }
 // live "what it's doing now" label from the last in-progress part of the last assistant msg
 function workingLabel(list) {
@@ -779,6 +785,7 @@ function setSending(on) {
   b.classList.toggle("stop", on);
   b.textContent = on ? "■" : "↑";
   b.title = on ? "Stop" : "Send";
+  updateWorking(); // show/hide the persistent working bar immediately
   // while sending, backstop a missed idle event: poll opencode's real status
   clearInterval(busyPoll); busyPoll = null;
   if (on) busyPoll = setInterval(() => { if (ocSid) syncBusy(); else { clearInterval(busyPoll); busyPoll = null; } }, 5000);
@@ -793,11 +800,11 @@ async function sendChat() {
   const parts = [];
   pendingAtts.forEach((a) => parts.push({ type: "file", mime: a.mime, filename: a.filename, url: a.dataUrl }));
   if (t) parts.push({ type: "text", text: t });
-  // optimistic user bubble + thinking indicator
+  // optimistic user bubble (working indicator is the persistent #chatWorking bar)
   const c = qs("#chatMsgs");
   pendingAtts.filter((a) => a.mime.startsWith("image/")).forEach((a) => { const im = document.createElement("img"); im.className = "att"; im.src = a.dataUrl; c.appendChild(im); });
   if (t) { const d = document.createElement("div"); d.className = "msg user"; d.textContent = t; c.appendChild(d); }
-  const think = document.createElement("div"); think.className = "thinking"; think.textContent = "opencode is working…"; c.appendChild(think); c.scrollTop = c.scrollHeight;
+  const think = document.createElement("div"); think.className = "thinking"; c.appendChild(think); c.scrollTop = c.scrollHeight; // holds error/stopped text
   chatInput.value = ""; growChat(); pendingAtts = []; renderAtts();
   sendAbort = new AbortController(); setSending(true);
   try {
