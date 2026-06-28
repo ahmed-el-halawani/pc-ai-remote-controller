@@ -5,7 +5,7 @@
 const { spawn, execFile } = require("child_process");
 
 const isWin = process.platform === "win32";
-const PORT = 4096;
+const PORT = Number(process.env.OPENCODE_PORT) || 4099; // 4096 can get stuck behind an orphaned socket on Windows
 const BASE = `http://127.0.0.1:${PORT}`;
 let proc = null, ready = null, modelsCache = null;
 

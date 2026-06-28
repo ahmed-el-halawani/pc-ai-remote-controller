@@ -38,7 +38,11 @@ let nextId = 1;
 
 function persist() {
   const metas = [...sessions.values()].map((s) => s.meta);
-  fs.writeFileSync(SESS_PATH, JSON.stringify(metas, null, 2));
+  // atomic write (tmp + rename) so a crash / overlapping process never leaves a
+  // truncated or half-written sessions.json
+  const tmp = SESS_PATH + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(metas, null, 2));
+  fs.renameSync(tmp, SESS_PATH);
 }
 function loadPersisted() {
   if (!fs.existsSync(SESS_PATH)) return;
