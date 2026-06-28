@@ -365,7 +365,9 @@ app.get("/oc/status", async (req, res) => {
   try {
     const map = await opencode.ocJson("/session/status");
     const st = map[req.query.sid];
-    res.json({ busy: !!(st && st.type && st.type !== "idle") });
+    const type = (st && st.type) || "idle";
+    res.json({ busy: type !== "idle", type }); // type: idle | busy | retry
+
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // primary agents = switchable modes (build / plan)

@@ -345,7 +345,7 @@ let term, fit, ws;      // xterm + websocket for active session
 function showView(id) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("show", v.id === id));
   if (id === "screen") startScreen(); else stopScreen();
-  if (id !== "vChat") { hideAC(); stopEvents(); qs("#qWrap").classList.remove("show"); qReq = null; }
+  if (id !== "vChat") { hideAC(); stopEvents(); stopStatusPoll(); qs("#qWrap").classList.remove("show"); qReq = null; }
 }
 document.querySelectorAll("[data-view]").forEach((b) => b.onclick = () => showView(b.dataset.view));
 
@@ -521,6 +521,7 @@ async function openChat(s) {
     await loadChat(); // fetches fresh state, re-renders, and updates the cache
     syncBusy(); // reflect a turn that may already be running (e.g. started from the CLI)
     startEvents(); // live updates (thinking/tool/text stream in)
+    startStatusPoll(); // keep tracking busy/model-wait even when SSE is quiet
     checkPendingQuestions(); // re-open a question asked before we connected
   } catch (e) { if (!(cached && cached.length)) qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
   finally { showSync(false); }
@@ -537,8 +538,13 @@ function startEvents() {
     const type = (ev.payload && ev.payload.type) || ev.type || "";
     if (/question\.(v2\.)?asked/.test(type) && ev.payload && ev.payload.properties) { openQuestions(ev.payload.properties); }
     if (/idle/.test(type)) { serverBusy = false; recomputeBusy(); } // a running tool still keeps it busy
-    if (!reloadPending) { reloadPending = true; setTimeout(() => { reloadPending = false; loadChat().catch(() => {}); }, 250); }
+    else { syncBusy(); } // any other activity: refresh the real busy state immediately
+    scheduleReload();
   };
+}
+function scheduleReload() {
+  if (reloadPending) return;
+  reloadPending = true; setTimeout(() => { reloadPending = false; loadChat().catch(() => {}); }, 250);
 }
 // mobile suspends the page (and kills the SSE) when backgrounded; on return,
 // reconnect the stream and reload so a turn that finished meanwhile shows up.
@@ -720,9 +726,23 @@ qs("#chatEffortBtn").onclick = () => {
     (it) => { chatEffort[chatModel] = it.label; localStorage.setItem("ocEffort", JSON.stringify(chatEffort)); updateEffortBtn(); });
 };
 // authoritative busy state from opencode (survives missed SSE events / backgrounding)
+let busyType = "idle";
 async function syncBusy() {
-  try { const r = await api("/oc/status?sid=" + encodeURIComponent(ocSid)); serverBusy = !!r.busy; recomputeBusy(); } catch {}
+  try { const r = await api("/oc/status?sid=" + encodeURIComponent(ocSid)); serverBusy = !!r.busy; busyType = r.type || "idle"; recomputeBusy(); } catch {}
 }
+// continuous status poll while the chat is open: catches the agent becoming busy
+// from any source — a CLI-driven turn, or waiting on the model with nothing
+// streaming yet — so the UI never looks stopped while a turn is actually active.
+let statusPoll = null;
+function startStatusPoll() {
+  stopStatusPoll();
+  statusPoll = setInterval(async () => {
+    if (!ocSid || !qs("#vChat").classList.contains("show")) return;
+    await syncBusy();
+    if (serverBusy) scheduleReload(); // pull any new parts during a quiet model-wait
+  }, 3000);
+}
+function stopStatusPoll() { if (statusPoll) { clearInterval(statusPoll); statusPoll = null; } }
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);
   lastMsgList = list;
@@ -819,7 +839,7 @@ function workingLabel(list) {
     if (p.type === "tool" && p.state && p.state.status === "pending") return (p.tool || "tool") + "…";
     if (p.type === "reasoning" && p.text && p.text.trim()) return "Thinking…";
   }
-  return "Working…";
+  return busyType === "retry" ? "Retrying…" : "Waiting for the model…"; // busy with nothing streaming yet
 }
 function renderAtts() {
   const a = qs("#chatAtts"); a.innerHTML = "";
@@ -839,7 +859,7 @@ chatInput.addEventListener("keydown", (e) => {
   if (acKeydown(e)) return;
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!chatSending) sendChat(); }
 });
-let chatSending = false, sendAbort = null, busyPoll = null;
+let chatSending = false, sendAbort = null;
 // single source of truth for "busy": the session's own status OR a still-running
 // tool (a server/bash the agent is waiting on). The only thing that flips the
 // Stop button / loading bar — every caller sets its input then recomputes.
@@ -852,10 +872,7 @@ function setSending(on) {
   b.textContent = on ? "■" : "↑";
   b.title = on ? "Stop" : "Send";
   updateWorking(); // show/hide the persistent working bar immediately
-  // while sending, backstop a missed idle event: poll opencode's real status
-  clearInterval(busyPoll); busyPoll = null;
-  if (on) busyPoll = setInterval(() => { if (ocSid) syncBusy(); else { clearInterval(busyPoll); busyPoll = null; } }, 5000);
-  else flushQueue(); // session free -> send the next queued message
+  if (!on) flushQueue(); // session free -> send the next queued message (status poll keeps busy fresh)
 }
 function stopChat() {
   if (sendAbort) sendAbort.abort();
