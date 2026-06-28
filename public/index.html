@@ -151,7 +151,6 @@
   <div class="view" id="screen"><img id="shot" alt="screen" /></div>
   <div class="view" id="vChat">
     <div id="chatTop">
-      <button id="chatModeBtn" title="Mode">Build ▾</button>
       <span style="flex:1"></span>
       <button id="chatSessions" title="Switch session">☰</button>
       <button id="chatNewSame" title="New session, same workspace">⧉</button>
@@ -165,12 +164,13 @@
         <div id="chatAtts"></div>
         <textarea id="chatInput" rows="1" placeholder="Message opencode…"></textarea>
         <div class="composer-meta">
+          <button class="metatrig" id="chatModeBtn" title="Mode"><span class="lbl">Build</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button class="metatrig" id="chatModelBtn" title="Model"><span class="lbl">Model</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button class="metatrig" id="chatEffortBtn" title="Reasoning effort" style="display:none"><span class="lbl">Effort</span><svg class="cv" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
         </div>
         <div class="composer-actions">
-          <button class="tool" id="toolLibrary"><span class="ico">☰</span> Library</button>
-          <button class="tool" id="toolContext"><span class="ico">☰</span> Context</button>
+          <button class="tool" id="toolLibrary" style="display:none"><span class="ico">☰</span> Library</button>
+          <button class="tool" id="toolContext" style="display:none"><span class="ico">☰</span> Context</button>
           <span style="flex:1"></span>
           <button class="icon" id="chatAddBtn" title="Attach">📎</button>
           <button class="icon" id="chatMic" title="Dictate">🎤</button>
@@ -539,7 +539,7 @@ function updateEffortBtn() {
   if (!vs.length) { b.style.display = "none"; return; }
   b.style.display = ""; b.querySelector(".lbl").textContent = chatEffort[chatModel] || "Effort";
 }
-function updateModeBtn() { qs("#chatModeBtn").textContent = chatAgent.charAt(0).toUpperCase() + chatAgent.slice(1) + " ▾"; }
+function updateModeBtn() { qs("#chatModeBtn").querySelector(".lbl").textContent = chatAgent.charAt(0).toUpperCase() + chatAgent.slice(1); }
 async function loadModeEffort() {
   updateModeBtn();
   try { providers = await api("/oc/providers"); } catch { providers = {}; }
