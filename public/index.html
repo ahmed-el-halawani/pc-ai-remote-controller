@@ -483,20 +483,23 @@ function collectCurrent() {
   if (cv) sel.push(cv);
   return sel;
 }
+// reply by aborting the (possibly blocked) turn and sending answers as a message.
+// This is the reliable path: opencode's requestID often goes stale (QuestionNotFound),
+// and a question tool blocks the turn so a plain message would queue without the abort.
+async function replyAsMessage(req, answers) {
+  if (req.msgId) answeredMsgId = req.msgId;
+  try { await api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }); } catch {}
+  chatInput.value = req.questions.map((q, i) => "• " + (q.question || "") + " → " + (answers[i] || []).join(", ")).join("\n");
+  growChat(); sendChat();
+}
 qs("#qNext").onclick = async () => {
   qAnswers[qIdx] = collectCurrent();
   if (qIdx < qReq.questions.length - 1) { qIdx++; renderQuestion(); return; }
   const req = qReq; qReq = null; qs("#qWrap").classList.remove("show");
-  if (req.synthetic) { // no recoverable requestID: reply as a normal message
-    answeredMsgId = req.msgId;
-    // a structured question tool blocks the turn — a new message would QUEUE behind it.
-    // abort the stuck turn first so our answer starts a fresh one.
-    if (req.fromTool) { try { await api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }); } catch {} }
-    chatInput.value = req.questions.map((q, i) => "• " + q.question + " → " + (qAnswers[i] || []).join(", ")).join("\n");
-    growChat(); sendChat();
-    return;
-  }
-  try { await api("/oc/question/reply", { method: "POST", body: JSON.stringify({ requestID: req.id, answers: qAnswers }) }); } catch (e) { alert("reply failed: " + e.message); }
+  if (req.synthetic) return replyAsMessage(req, qAnswers); // no requestID at all
+  // live structured question: try the proper reply, fall back to a message if it's stale
+  try { await api("/oc/question/reply", { method: "POST", body: JSON.stringify({ requestID: req.id, answers: qAnswers }) }); }
+  catch { await replyAsMessage(req, qAnswers); }
 };
 qs("#qCancel").onclick = async () => {
   const req = qReq; qReq = null; qs("#qWrap").classList.remove("show");
