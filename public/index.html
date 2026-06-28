@@ -43,7 +43,12 @@
   .card .grow { flex: 1; }
   .card small { color: #8b949e; display: block; }
   input, select { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 6px; font-size: 13px; }
-  dialog { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; border-radius: 10px; width: min(94vw, 460px); }
+  dialog { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; border-bottom: none;
+    border-radius: 18px 18px 0 0; width: 100%; max-width: 560px; padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    position: fixed; inset: auto 0 0 0; margin: 0 auto; top: auto; max-height: 88vh; overflow: auto; }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog[open] { animation: sheetUp .22s cubic-bezier(.22,.61,.36,1); }
+  @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
   dialog h3 { margin: 0 0 8px; }
   .row { display: flex; gap: 6px; margin: 6px 0; align-items: center; }
   .row > * { min-width: 0; }
@@ -52,7 +57,7 @@
   #fsList div:active { background: #21262d; }
   .pill { font-size: 11px; color: #8b949e; }
   /* skills + context bottom sheet */
-  dialog.sheet { width: min(96vw, 520px); max-height: 82vh; }
+  dialog.sheet { max-width: 560px; max-height: 86vh; }
   .tabs { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
   .tabs button.on { background: #1f6feb; border-color: #388bfd; }
   .search { width: 100%; margin-bottom: 6px; }
@@ -239,6 +244,15 @@ const api = async (p, opt = {}) => {
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
   return r.ctHeaderJson === false ? r : r.json();
 };
+
+// dismiss any dialog (bottom sheet) when pressing outside its box
+document.querySelectorAll("dialog").forEach((d) => {
+  d.addEventListener("click", (e) => {
+    if (e.target !== d) return; // clicks on content bubble up with target = child
+    const r = d.getBoundingClientRect();
+    if (e.clientY < r.top || e.clientY > r.bottom || e.clientX < r.left || e.clientX > r.right) d.close();
+  });
+});
 
 let agents = {};        // descriptors
 let active = null;      // active session id
