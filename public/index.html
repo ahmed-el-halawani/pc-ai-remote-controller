@@ -85,6 +85,24 @@
   .acpop .acitem { padding: 10px 12px; border-top: 1px solid #21262d; font-size: 14px; display: flex; gap: 6px; align-items: center; }
   .acpop .acitem.sel, .acpop .acitem:active { background: #1f6feb22; }
   .acpop .acd { color: #6e7681; font-size: 12px; }
+  /* AI question bottom sheet */
+  #qWrap { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 100; align-items: flex-end; }
+  #qWrap.show { display: flex; }
+  #qSheet { width: 100%; max-height: 82vh; overflow-y: auto; background: #161b22; border-top: 1px solid #30363d; border-radius: 20px 20px 0 0; padding: 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 -10px 30px rgba(0,0,0,.5); }
+  .qhead { display: flex; align-items: center; gap: 8px; }
+  .qhead .qh { font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #8b949e; flex: 1; }
+  .qpager { font-size: 12px; color: #8b949e; background: #21262d; border: 1px solid #30363d; border-radius: 10px; padding: 3px 9px; }
+  .qq { font-size: 16px; line-height: 1.4; }
+  #qBody { display: flex; flex-direction: column; gap: 8px; }
+  .qopt { display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px; border: 1px solid #30363d; border-radius: 12px; cursor: pointer; }
+  .qopt.sel { border-color: #1f6feb; background: #1f6feb1f; }
+  .qopt input { margin: 3px 0 0; flex: none; }
+  .qopt .qol { font-size: 14px; }
+  .qopt .qod { font-size: 12px; color: #8b949e; margin-top: 2px; }
+  .qcustom { width: 100%; margin-top: 2px; }
+  .qactions { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
+  #qNext { background: #fb6a3c; color: #fff; border: none; border-radius: 12px; padding: 11px 20px; font-size: 14px; font-weight: 600; }
+  #qCancel { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 12px; padding: 11px 16px; font-size: 14px; }
   .composer { background: #0d1117; border: 1px solid #30363d; border-radius: 22px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
   .composer-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
   #chatInput { width: 100%; background: transparent; border: none; color: #c9d1d9; font: inherit; font-size: 15px; padding: 4px 2px; resize: none; max-height: 30vh; }
@@ -149,6 +167,19 @@
 </div>
 <input type="file" id="chatFile" accept="*/*" style="display:none" multiple />
 
+<div id="qWrap">
+  <div id="qSheet">
+    <div class="qhead"><span id="qHeader" class="qh"></span><span id="qPager" class="qpager"></span></div>
+    <div id="qQuestion" class="qq"></div>
+    <div id="qBody"></div>
+    <div class="qactions">
+      <button id="qCancel">Cancel</button>
+      <span style="flex:1"></span>
+      <button id="qNext" class="primary">Next</button>
+    </div>
+  </div>
+</div>
+
 <dialog id="dlgNew">
   <h3>New session</h3>
   <div class="row"><input id="nName" placeholder="name (optional)" class="grow" /></div>
@@ -207,7 +238,7 @@ let term, fit, ws;      // xterm + websocket for active session
 function showView(id) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("show", v.id === id));
   if (id === "screen") startScreen(); else stopScreen();
-  if (id !== "vChat") { hideAC(); stopEvents(); }
+  if (id !== "vChat") { hideAC(); stopEvents(); qs("#qWrap").classList.remove("show"); qReq = null; }
 }
 document.querySelectorAll("[data-view]").forEach((b) => b.onclick = () => showView(b.dataset.view));
 
@@ -352,6 +383,7 @@ async function openChat(s) {
     allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
     await loadChat();
     startEvents(); // live updates (thinking/tool/text stream in)
+    checkPendingQuestions(); // re-open a question asked before we connected
   } catch (e) { qs("#chatMsgs").innerHTML = "<div class='thinking'>⚠️ " + e.message + "</div>"; }
   refresh();
 }
@@ -364,10 +396,57 @@ function startEvents() {
   evtSrc.onmessage = (e) => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     const type = (ev.payload && ev.payload.type) || ev.type || "";
+    if (/question\.(v2\.)?asked/.test(type) && ev.payload && ev.payload.properties) { openQuestions(ev.payload.properties); }
     if (/idle/.test(type)) setSending(false);
     if (!reloadPending) { reloadPending = true; setTimeout(() => { reloadPending = false; loadChat().catch(() => {}); }, 250); }
   };
 }
+
+// ---- AI questions (single/multiple choice + custom text), paged ----
+let qReq = null, qIdx = 0, qAnswers = [];
+async function checkPendingQuestions() {
+  try { const list = await api("/oc/questions?sid=" + encodeURIComponent(ocSid)); if (list && list.length) openQuestions(list[0]); } catch {}
+}
+function openQuestions(req) {
+  if (!req || !req.questions || !req.questions.length) return;
+  if (qReq && qReq.id === req.id) return; // already showing
+  qReq = req; qIdx = 0; qAnswers = req.questions.map(() => []);
+  renderQuestion(); qs("#qWrap").classList.add("show");
+}
+function renderQuestion() {
+  const q = qReq.questions[qIdx], n = qReq.questions.length;
+  qs("#qHeader").textContent = q.header || "Question";
+  qs("#qPager").textContent = (qIdx + 1) + " / " + n;
+  qs("#qPager").style.display = n > 1 ? "" : "none";
+  qs("#qQuestion").textContent = q.question || "";
+  const body = qs("#qBody"); body.innerHTML = "";
+  (q.options || []).forEach((o) => {
+    const lab = document.createElement("label"); lab.className = "qopt";
+    const inp = document.createElement("input"); inp.type = q.multiple ? "checkbox" : "radio"; inp.name = "qopt"; inp.value = o.label;
+    inp.onchange = () => [...body.querySelectorAll(".qopt")].forEach((el) => el.classList.toggle("sel", el.querySelector("input").checked));
+    const tx = document.createElement("div"); tx.innerHTML = `<div class="qol">${o.label}</div>${o.description ? `<div class="qod">${o.description}</div>` : ""}`;
+    lab.append(inp, tx); body.appendChild(lab);
+  });
+  if (q.custom) { const ci = document.createElement("input"); ci.className = "qcustom"; ci.placeholder = "Other… (type a different answer)"; body.appendChild(ci); }
+  qs("#qNext").textContent = qIdx === n - 1 ? "Submit" : "Next";
+}
+function collectCurrent() {
+  const body = qs("#qBody");
+  const sel = [...body.querySelectorAll("input[type=radio]:checked, input[type=checkbox]:checked")].map((i) => i.value);
+  const custom = body.querySelector(".qcustom"); const cv = custom ? custom.value.trim() : "";
+  if (cv) sel.push(cv);
+  return sel;
+}
+qs("#qNext").onclick = async () => {
+  qAnswers[qIdx] = collectCurrent();
+  if (qIdx < qReq.questions.length - 1) { qIdx++; renderQuestion(); return; }
+  const req = qReq; qReq = null; qs("#qWrap").classList.remove("show");
+  try { await api("/oc/question/reply", { method: "POST", body: JSON.stringify({ requestID: req.id, answers: qAnswers }) }); } catch (e) { alert("reply failed: " + e.message); }
+};
+qs("#qCancel").onclick = async () => {
+  const req = qReq; qReq = null; qs("#qWrap").classList.remove("show");
+  if (req) { try { await api("/oc/question/reject", { method: "POST", body: JSON.stringify({ requestID: req.id }) }); } catch {} }
+};
 function updateModelBtn() { qs("#chatModelBtn").textContent = (chatModel ? chatModel.split("/").pop() : "Model") + " ▾"; }
 async function loadChat() {
   const list = await api("/oc/messages?sid=" + ocSid);

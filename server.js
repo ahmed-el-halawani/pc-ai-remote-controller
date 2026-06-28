@@ -364,6 +364,23 @@ app.get("/oc/messages", async (req, res) => {
 app.post("/oc/abort", async (req, res) => {
   try { res.json({ ok: await opencode.abort(req.body.sid) }); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// structured questions the agent asks (single/multiple choice, custom text)
+app.get("/oc/questions", async (req, res) => {
+  try {
+    const all = await opencode.ocJson("/question");
+    res.json(req.query.sid ? all.filter((q) => q.sessionID === req.query.sid) : all);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/oc/question/reply", async (req, res) => {
+  try {
+    await opencode.ocJson(`/question/${req.body.requestID}/reply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answers: req.body.answers }) });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/oc/question/reject", async (req, res) => {
+  try { await opencode.ocJson(`/question/${req.body.requestID}/reject`, { method: "POST" }); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 // live updates: proxy opencode's /global/event SSE, filtered to one session
 app.get("/oc/events", async (req, res) => {
   const sid = req.query.sid || "";
