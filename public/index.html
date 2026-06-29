@@ -1102,7 +1102,25 @@ qs("#chatModelBtn").onclick = async () => {
   openMenu("Model", ms.map((m) => ({ label: m })), (it) => { chatModel = it.label; localStorage.setItem("ocModel", chatModel); updateModelBtn(); }, { search: true });
 };
 // attachments: file picker + paste image
-const fileToAtt = (f) => new Promise((res) => { const r = new FileReader(); r.onload = () => res({ filename: f.name || "pasted", mime: f.type || "application/octet-stream", dataUrl: r.result }); r.readAsDataURL(f); });
+// downscale images (≤1568px long edge, JPEG) before sending — smaller payload + fewer vision tokens
+function shrinkImage(f, maxEdge = 1568, quality = 0.82) {
+  return new Promise((res) => {
+    const url = URL.createObjectURL(f), img = new Image();
+    img.onerror = () => { URL.revokeObjectURL(url); res(null); };
+    img.onload = () => {
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, w, h); x.drawImage(img, 0, 0, w, h); // white bg so transparent PNGs aren't black
+      URL.revokeObjectURL(url); res(c.toDataURL("image/jpeg", quality));
+    };
+    img.src = url;
+  });
+}
+const fileToAtt = async (f) => {
+  if (f.type && f.type.startsWith("image/")) { const d = await shrinkImage(f); if (d) return { filename: (f.name || "image").replace(/\.\w+$/, "") + ".jpg", mime: "image/jpeg", dataUrl: d }; }
+  return new Promise((res) => { const r = new FileReader(); r.onload = () => res({ filename: f.name || "pasted", mime: f.type || "application/octet-stream", dataUrl: r.result }); r.readAsDataURL(f); });
+};
 qs("#chatAddBtn").onclick = () => qs("#chatFile").click();
 qs("#chatFile").onchange = async (e) => { for (const f of e.target.files) pendingAtts.push(await fileToAtt(f)); renderAtts(); e.target.value = ""; };
 chatInput.addEventListener("paste", async (e) => {
