@@ -156,7 +156,7 @@ function deleteSession(id) {
 
 // ---- http app -------------------------------------------------------------
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "50mb" })); // base64 image/file attachments exceed the 100kb default
 
 // shared-token gate for everything except static shell + health
 function tokenOk(req) {
