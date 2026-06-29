@@ -508,7 +508,10 @@ app.get("/cc/messages", (req, res) => {
 app.post("/cc/abort", (req, res) => res.json({ ok: claude.abort(req.body.sid) }));
 app.post("/cc/send", async (req, res) => {
   const sid = req.body.sid, cwd = req.body.cwd || ccCwd(sid);
-  const text = (req.body.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
+  const parts = materializeAttachments(req.body.parts, cwd); // images -> disk; Claude reads them with its Read tool
+  let text = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+  const files = parts.filter((p) => p.type === "file" && p.url).map((p) => p.url.replace(/^file:\/+/, ""));
+  if (files.length) text += (text ? "\n\n" : "") + files.map((f) => "[Attached file: " + f + "]").join("\n") + "\nView the attached file(s) before answering.";
   try {
     await claude.send(sid, text, { model: req.body.model, mode: req.body.agent, effort: req.body.variant }, cwd,
       () => { for (const c of ccClients[sid] || []) try { c.write("data: tick\n\n"); } catch {} });
