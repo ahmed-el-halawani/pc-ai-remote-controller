@@ -77,8 +77,13 @@ function notify(text) {
 
 function startPty(s, extraArgs = []) {
   const extra = [...extraArgs];
-  // opencode CLI continues the chat's conversation when launched with --session
+  // launch the CLI continuing the chat's conversation (same on-disk session)
   if (s.meta.agent === "opencode" && s.meta.ocSid) extra.push("--session", s.meta.ocSid);
+  if (s.meta.agent === "claude") {
+    if (!s.meta.ccSid) { s.meta.ccSid = require("crypto").randomUUID(); persist(); } // CLI-first: pin an id the chat will reuse
+    const exists = fs.existsSync(require("./claude").transcriptPath(s.meta.ccSid, s.meta.cwd));
+    extra.push(exists ? "--resume" : "--session-id", s.meta.ccSid); // resume existing, else create with our id
+  }
   const { file, args } = agentCommand(s.meta.agent, extra);
   fs.mkdirSync(s.meta.cwd, { recursive: true });
   const p = pty.spawn(file, args, {
