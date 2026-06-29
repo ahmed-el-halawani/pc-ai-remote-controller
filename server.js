@@ -78,7 +78,9 @@ function notify(text) {
 function startPty(s, extraArgs = []) {
   const extra = [...extraArgs];
   // launch the CLI continuing the chat's conversation (same on-disk session)
-  if (s.meta.agent === "opencode" && s.meta.ocSid) extra.push("--session", s.meta.ocSid);
+  // opencode: attach the TUI to the SAME running serve the chat uses, else two
+  // separate opencode processes fight over the session and lose each other's messages.
+  if (s.meta.agent === "opencode" && s.meta.ocSid) { require("./opencode").start(); extra.push("attach", require("./opencode").BASE, "--session", s.meta.ocSid); }
   if (s.meta.agent === "claude") {
     if (!s.meta.ccSid) { s.meta.ccSid = require("crypto").randomUUID(); persist(); } // CLI-first: pin an id the chat will reuse
     const exists = fs.existsSync(require("./claude").transcriptPath(s.meta.ccSid, s.meta.cwd));
