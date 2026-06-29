@@ -380,7 +380,7 @@ async function refresh() {
 
 // opencode sessions default to the chat GUI; everything else to the terminal
 function openSession(s) {
-  if (s.agent === "opencode") openChat(s); else openTerminal(s);
+  if (s.agent === "opencode" || s.agent === "claude") openChat(s); else openTerminal(s);
 }
 
 // ---- terminal session ----
@@ -475,6 +475,7 @@ function buildOptbar(s) {
 
 // ---- opencode chat GUI ----
 let ocSid = null;
+let chatApi = "/oc"; // "/oc" for opencode, "/cc" for Claude Code — set per session in openChat
 // per-session message cache (keyed by app session id, known before the network round-trip)
 // so reopening a session shows its last state instantly while fresh data loads.
 const cacheKey = (id) => "chat:" + id;
@@ -503,12 +504,13 @@ let chatGen = 0; // bumped on every openChat; stale async results from a prior s
 
 async function ensureOcSession(s) {
   // server keeps the opencode conversation id in session meta (shared across devices + the CLI tab)
-  const r = await api("/oc/session", { method: "POST", body: JSON.stringify({ session: s.id, cwd: s.cwd, title: s.name }) });
+  const r = await api(chatApi + "/session", { method: "POST", body: JSON.stringify({ session: s.id, cwd: s.cwd, title: s.name }) });
   return r.id;
 }
 async function openChat(s) {
   const myGen = ++chatGen;
   stopEvents(); stopStatusPoll(); // stop the previous session's sync immediately
+  chatApi = s.agent === "claude" ? "/cc" : "/oc"; // route the chat calls to the right engine
   active = s.id; activeSession = s;
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
   showView("vChat");
@@ -526,7 +528,8 @@ async function openChat(s) {
   try {
     ocSid = await ensureOcSession(s);
     if (myGen !== chatGen) return; // navigated to another session while resolving
-    if (!chatModel) { const ms = await api("/oc/models").catch(() => []); chatModel = ms.find((m) => /free/i.test(m)) || ms[0] || ""; localStorage.setItem("ocModel", chatModel); }
+    { const ms = await api(chatApi + "/models").catch(() => []); // coerce to a model valid for this engine
+      if (ms.length && !ms.includes(chatModel)) { chatModel = ms.find((m) => /free/i.test(m)) || ms[0]; localStorage.setItem("ocModel", chatModel); } }
     updateModelBtn();
     loadModeEffort(); // mode (build/plan) + per-model effort menus
     allSkills = []; loadSkills().catch(() => {}); // preload for the quick-menus + / @ triggers
@@ -546,7 +549,7 @@ let evtSrc = null, reloadPending = false;
 function stopEvents() { if (evtSrc) { evtSrc.close(); evtSrc = null; } }
 function startEvents() {
   stopEvents();
-  evtSrc = new EventSource("/oc/events?sid=" + encodeURIComponent(ocSid) + "&token=" + encodeURIComponent(TOKEN));
+  evtSrc = new EventSource(chatApi + "/events?sid=" + encodeURIComponent(ocSid) + "&token=" + encodeURIComponent(TOKEN));
   evtSrc.onmessage = (e) => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     const type = (ev.payload && ev.payload.type) || ev.type || "";
@@ -622,6 +625,7 @@ qs("#planReject").onclick = () => { if (planReq) resolvedPlanId = planReq.id; cl
 // ---- AI questions (single/multiple choice + custom text), paged ----
 let qReq = null, qIdx = 0, qAnswers = [], answeredMsgId = null;
 async function checkPendingQuestions() {
+  if (chatApi !== "/oc") return; // claude has no structured-question API; text questions handled in loadChat
   try { const list = await api("/oc/questions?sid=" + encodeURIComponent(ocSid)); if (list && list.length) openQuestions(list[0]); } catch {}
 }
 // Models that can't call the structured-question tool just TYPE the questions.
@@ -697,7 +701,7 @@ function collectCurrent() {
 // and a question tool blocks the turn so a plain message would queue without the abort.
 async function replyAsMessage(req, answers) {
   if (req.msgId) answeredMsgId = req.msgId;
-  try { await api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }); } catch {}
+  try { await api(chatApi + "/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }); } catch {}
   chatInput.value = req.questions.map((q, i) => "• " + (q.question || "") + " → " + (answers[i] || []).join(", ")).join("\n");
   growChat(); sendChat();
 }
@@ -726,8 +730,9 @@ function updateEffortBtn() {
 function updateModeBtn() { qs("#chatModeBtn").querySelector(".lbl").textContent = chatAgent.charAt(0).toUpperCase() + chatAgent.slice(1); }
 async function loadModeEffort() {
   updateModeBtn();
-  try { providers = await api("/oc/providers"); } catch { providers = {}; }
-  try { const a = await api("/oc/agents"); if (a && a.length) agentList = a; } catch {}
+  try { providers = await api(chatApi + "/providers"); } catch { providers = {}; }
+  try { const a = await api(chatApi + "/agents"); if (a && a.length) agentList = a; } catch {}
+  if (!agentList.includes(chatAgent)) { chatAgent = agentList[0]; localStorage.setItem("ocAgent", chatAgent); updateModeBtn(); } // valid mode for this engine
   updateEffortBtn();
 }
 qs("#chatModeBtn").onclick = () => openMenu("Mode", agentList.map((a) => ({ label: a })),
@@ -741,7 +746,7 @@ qs("#chatEffortBtn").onclick = () => {
 let busyType = "idle";
 async function syncBusy() {
   const sid = ocSid;
-  try { const r = await api("/oc/status?sid=" + encodeURIComponent(sid)); if (sid !== ocSid) return; serverBusy = !!r.busy; busyType = r.type || "idle"; recomputeBusy(); } catch {}
+  try { const r = await api(chatApi + "/status?sid=" + encodeURIComponent(sid)); if (sid !== ocSid) return; serverBusy = !!r.busy; busyType = r.type || "idle"; recomputeBusy(); } catch {}
 }
 // continuous status poll while the chat is open: catches the agent becoming busy
 // from any source — a CLI-driven turn, or waiting on the model with nothing
@@ -759,7 +764,7 @@ function startStatusPoll() {
 function stopStatusPoll() { if (statusPoll) { clearInterval(statusPoll); statusPoll = null; } }
 async function loadChat() {
   const sid = ocSid;
-  const list = await api("/oc/messages?sid=" + sid);
+  const list = await api(chatApi + "/messages?sid=" + sid);
   if (sid !== ocSid) return; // session switched while loading — drop the stale result
   lastMsgList = list;
   const last = list[list.length - 1]; // track streaming activity (content changing) for isWorking
@@ -920,7 +925,7 @@ function stopChat() {
   inFlight = false;
   const last = lastMsgList[lastMsgList.length - 1]; // don't let the stopped (still-incomplete) turn linger as "working"
   if (last && last.info) suppressId = last.info.id;
-  if (ocSid) api("/oc/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }).catch(() => {});
+  if (ocSid) api(chatApi + "/abort", { method: "POST", body: JSON.stringify({ sid: ocSid }) }).catch(() => {});
   recomputeBusy();
 }
 // client-side send queue: while the agent is busy, new messages wait here
@@ -964,7 +969,7 @@ async function doSend(item) {
   lastMsgList = lastMsgList.concat([{ info: { role: "user", id: "opt", time: { created: Date.now() } }, parts: item.text ? [{ type: "text", text: item.text }] : [] }]);
   sendAbort = new AbortController(); inFlight = true; suppressId = null; recomputeBusy();
   try {
-    await api("/oc/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd, agent: chatAgent, variant: chatEffort[chatModel] || undefined }) });
+    await api(chatApi + "/send", { method: "POST", signal: sendAbort.signal, body: JSON.stringify({ sid: ocSid, model: chatModel, parts, cwd: activeSession.cwd, agent: chatAgent, variant: chatEffort[chatModel] || undefined }) });
     await loadChat();
   } catch (e) {
     if (e.name === "AbortError") { think.textContent = "⏹ stopped"; await loadChat().catch(() => {}); }
@@ -1072,7 +1077,7 @@ async function refreshSession(s) {
   if (!s) return;
   try { await api("/sessions/" + s.id + "/restart", { method: "POST" }); } catch {}
   if (term) term.reset();
-  if (s.agent === "opencode" && qs("#vChat").classList.contains("show")) openChat(s);
+  if ((s.agent === "opencode" || s.agent === "claude") && qs("#vChat").classList.contains("show")) openChat(s);
   else openTerminal(s);
 }
 // spawn another session in the same workspace (same cwd + agent) and open it
@@ -1093,7 +1098,7 @@ qs("#chatSessions").onclick = () => openSessionsMenu(activeSession);
 qs("#chatNewSame").onclick = () => newSameWorkspace(activeSession);
 qs("#chatRefresh").onclick = () => refreshSession(activeSession);
 qs("#chatModelBtn").onclick = async () => {
-  const ms = await api("/oc/models").catch(() => []);
+  const ms = await api(chatApi + "/models").catch(() => []);
   openMenu("Model", ms.map((m) => ({ label: m })), (it) => { chatModel = it.label; localStorage.setItem("ocModel", chatModel); updateModelBtn(); }, { search: true });
 };
 // attachments: file picker + paste image

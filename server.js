@@ -478,6 +478,48 @@ app.get("/oc/file", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---- Claude Code chat (same GUI, headless `claude -p --output-format stream-json`) ----
+const claude = require("./claude");
+const crypto = require("crypto");
+const ccClients = {}; // ccSid -> Set(res) for live ticks
+const ccCwd = (sid) => { const s = [...sessions.values()].find((x) => x.meta.ccSid === sid); return s ? s.meta.cwd : null; };
+function ensureCcSid(s) { if (!s.meta.ccSid) { s.meta.ccSid = crypto.randomUUID(); persist(); } return s.meta.ccSid; }
+
+app.post("/cc/session", (req, res) => {
+  const s = sessions.get(req.body.session);
+  if (!s) return res.status(404).json({ error: "no session" });
+  res.json({ id: ensureCcSid(s) });
+});
+app.get("/cc/models", (_req, res) => {
+  const ms = ((cfg.agents.claude || {}).models || []).map((m) => (m.slash || "").replace(/^\/model\s+/, "") || m.label).filter(Boolean);
+  res.json(ms.length ? ms : ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]);
+});
+app.get("/cc/providers", (_req, res) => res.json({})); // no per-model effort variants for claude (v1)
+app.get("/cc/agents", (_req, res) => res.json(["default", "plan", "acceptEdits", "bypassPermissions"])); // permission modes
+app.get("/cc/status", (req, res) => res.json({ busy: claude.isBusy(req.query.sid), type: claude.isBusy(req.query.sid) ? "busy" : "idle" }));
+app.get("/cc/messages", (req, res) => {
+  try { res.json(claude.getMessages(req.query.sid, ccCwd(req.query.sid))); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/cc/abort", (req, res) => res.json({ ok: claude.abort(req.body.sid) }));
+app.post("/cc/send", async (req, res) => {
+  const sid = req.body.sid, cwd = req.body.cwd || ccCwd(sid);
+  const text = (req.body.parts || []).filter((p) => p.type === "text").map((p) => p.text).join("\n");
+  try {
+    await claude.send(sid, text, { model: req.body.model, mode: req.body.agent, effort: req.body.variant }, cwd,
+      () => { for (const c of ccClients[sid] || []) try { c.write("data: tick\n\n"); } catch {} });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get("/cc/events", (req, res) => {
+  const sid = req.query.sid || "";
+  res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write(": connected\n\n");
+  const set = ccClients[sid] || (ccClients[sid] = new Set()); set.add(res);
+  const ka = setInterval(() => { try { res.write(": ka\n\n"); } catch {} }, 15000);
+  req.on("close", () => { clearInterval(ka); set.delete(res); });
+});
+
 // rustdesk launch info for the UI button
 app.get("/rustdesk", (_req, res) => res.json({ id: cfg.rustdeskId || "" }));
 
